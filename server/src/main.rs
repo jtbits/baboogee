@@ -10,10 +10,8 @@ use std::{
     time::Duration,
 };
 
+use game_core::constants::{PORT, ALL_HOSTS};
 use logger::{log, log_info, log_error};
-
-const ALL_HOSTS: &'static str = "0.0.0.0";
-const PORT: u16 = 42069;
 
 enum ClientEvent {
     Connect {

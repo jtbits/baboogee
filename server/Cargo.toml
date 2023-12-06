@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 logger = { path = "../logger" }
+game_core = { path = "../game_core" }

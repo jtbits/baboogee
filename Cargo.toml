@@ -6,4 +6,5 @@ members = [
 	"logger",
 	"proto_dryb",
 	"proto_dryb_derive",
+	"game_core",
 ]

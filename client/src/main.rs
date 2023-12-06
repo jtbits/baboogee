@@ -13,9 +13,7 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand,
 };
-
-const LOCAL_HOST: &'static str = "127.0.0.1";
-const PORT: u16 = 42069;
+use game_core::constants::{PORT, LOCAL_HOST};
 
 #[derive(Default)]
 struct Client {
