@@ -13,7 +13,15 @@ use crossterm::{
     terminal::{self, Clear, ClearType},
     QueueableCommand,
 };
-use game_core::constants::{PORT, LOCAL_HOST};
+use game_core::constants::{LOCAL_HOST, PORT};
+
+const LOGO: &'static str = r#"
+██████   █████  ██████   ██████   ██████   ██████  ███████ ███████ 
+██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██       ██      ██      
+██████  ███████ ██████  ██    ██ ██    ██ ██   ███ █████   █████   
+██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██    ██ ██      ██      
+██████  ██   ██ ██████   ██████   ██████   ██████  ███████ ███████ 
+"#;
 
 #[derive(Default)]
 struct Client {
@@ -37,39 +45,38 @@ impl Client {
     }
 }
 
-fn draw_map(
-    stdout: &mut io::Stdout,
-    (terminal_width, terminal_height): (u16, u16),
-) -> Result<(), io::Error> {
+fn draw_map(stdout: &mut io::Stdout, (terminal_width, terminal_height): (u16, u16)) {
     let center_coords = (terminal_width / 2, terminal_height / 2);
 
     for x in 0..terminal_height - 2 {
-        stdout.queue(MoveTo(0, x))?;
-        stdout.queue(PrintStyledContent(
-            "X".repeat(terminal_width as usize).grey(),
-        ))?;
+        stdout.queue(MoveTo(0, x)).unwrap();
+        stdout
+            .queue(PrintStyledContent(
+                "X".repeat(terminal_width as usize).grey(),
+            ))
+            .unwrap();
     }
 
-    stdout.queue(MoveTo(center_coords.0, center_coords.1))?;
-    stdout.queue(PrintStyledContent('P'.red()))?;
-
-    Ok(())
+    stdout
+        .queue(MoveTo(center_coords.0, center_coords.1))
+        .unwrap();
+    stdout.queue(PrintStyledContent('P'.red())).unwrap();
 }
 
-fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) -> Result<(), io::Error> {
-    stdout.queue(MoveTo(0, x))?;
-    stdout.queue(PrintStyledContent("=".repeat(w).green()))?;
-
-    Ok(())
+fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) {
+    stdout.queue(MoveTo(0, x)).unwrap();
+    stdout
+        .queue(PrintStyledContent("=".repeat(w).green()))
+        .unwrap();
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() {
     terminal::enable_raw_mode().expect("failed to enable raw mode");
     let mut stdout = stdout();
-    let mut terminal_dimensions = terminal::size()?;
+    let mut terminal_dimensions = terminal::size().unwrap();
 
-    stdout.queue(Clear(ClearType::All))?;
-    stdout.queue(Hide)?;
+    stdout.queue(Clear(ClearType::All)).unwrap();
+    stdout.queue(Hide).unwrap();
 
     let mut buf = [0; 256];
     let mut client = Client::default();
@@ -77,13 +84,13 @@ fn main() -> Result<(), io::Error> {
 
     while !client.quit {
         loop {
-            while poll(Duration::ZERO)? {
-                match read()? {
+            while poll(Duration::ZERO).unwrap() {
+                match read().unwrap() {
                     Event::Resize(w, h) => terminal_dimensions = (w, h),
                     Event::Key(event) => {
                         if let KeyCode::Char(c) = event.code {
                             if c == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
-                                terminal::disable_raw_mode()?;
+                                terminal::disable_raw_mode().unwrap();
                                 exit(0);
                             }
                         }
@@ -92,19 +99,16 @@ fn main() -> Result<(), io::Error> {
                 }
             }
 
-            draw_map(&mut stdout, terminal_dimensions).expect("error during drawing map");
+            draw_map(&mut stdout, terminal_dimensions);
             draw_line(
                 &mut stdout,
                 terminal_dimensions.1 - 2,
                 terminal_dimensions.0 as usize,
-            )
-            .expect("error during drawign line");
+            );
 
-            stdout.flush()?;
+            stdout.flush().unwrap();
 
             thread::sleep(Duration::from_millis(33));
         }
     }
-
-    Ok(())
 }

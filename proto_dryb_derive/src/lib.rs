@@ -24,14 +24,21 @@ pub fn derive_serialize(item: TokenStream) -> TokenStream {
     result.push_str("impl Serialize for ");
     result.push_str(name.as_str());
     result.push_str(" {\n");
-    result.push_str("\tfn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {\n");
+    result
+        .push_str("\tfn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {\n");
 
     if let TokenTree::Group(g) = iter.next().unwrap() {
         let mut var_tokens = g.stream().into_iter();
         result.push_str("\t\tlet mut offset = 0;\n");
         while let Some(TokenTree::Ident(ident)) = var_tokens.next() {
             let var_name = ident.to_string();
-            result.push_str(format!("\t\toffset += self.{}.serialize(&mut buffer[offset..])?;\n", var_name).as_str());
+            result.push_str(
+                format!(
+                    "\t\toffset += self.{}.serialize(&mut buffer[offset..])?;\n",
+                    var_name
+                )
+                .as_str(),
+            );
 
             loop {
                 match var_tokens.next() {
@@ -43,10 +50,10 @@ pub fn derive_serialize(item: TokenStream) -> TokenStream {
                                 if p.as_char() == ',' {
                                     break;
                                 }
-                            },
+                            }
                             _ => continue,
                         }
-                    },
+                    }
                 }
             }
         }

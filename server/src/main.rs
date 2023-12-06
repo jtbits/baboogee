@@ -10,8 +10,8 @@ use std::{
     time::Duration,
 };
 
-use game_core::constants::{PORT, ALL_HOSTS};
-use logger::{log, log_info, log_error};
+use game_core::constants::{ALL_HOSTS, PORT};
+use logger::{log, log_error, log_info};
 
 enum ClientEvent {
     Connect {
@@ -78,16 +78,18 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
     loop {
         match events.recv_timeout(Duration::from_millis(200)) {
             Ok(msg) => match msg {
-                ClientEvent::Connect { addr, stream } => server.client_connected(&mut buf, addr, stream),
+                ClientEvent::Connect { addr, stream } => {
+                    server.client_connected(&mut buf, addr, stream)
+                }
                 ClientEvent::Disconnect { addr } => server.client_disconnected(addr),
                 ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes),
                 ClientEvent::Error { addr, err } => eprintln!("Client error: {}, {}", addr, err),
             },
-            Err(RecvTimeoutError::Timeout) => {},
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 log_error!("Message receiver disconnected");
                 return Err(());
-            },
+            }
         }
     }
 }

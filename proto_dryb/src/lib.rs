@@ -21,18 +21,18 @@ pub trait Serialize {
 
 impl<T> Serialize for Option<T>
 where
-    T: Serialize
+    T: Serialize,
 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {
         match self {
             Some(x) => {
                 buffer[0] = 1;
                 Ok(x.serialize(&mut buffer[1..])? + 1)
-            },
+            }
             None => {
                 buffer[0] = 0;
                 Ok(1)
-            },
+            }
         }
     }
 }
@@ -89,7 +89,6 @@ impl Serialize for i16 {
 }
 
 // TODO u32 i32 u64 i64
-
 
 #[derive(Debug)]
 pub enum DeserializeError {
