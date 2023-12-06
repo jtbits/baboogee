@@ -10,6 +10,8 @@ use std::{
     time::Duration,
 };
 
+use logger::{log, log_info, log_error};
+
 const ALL_HOSTS: &'static str = "0.0.0.0";
 const PORT: u16 = 42069;
 
@@ -57,13 +59,13 @@ impl Server {
 
         self.clients.insert(addr, client);
 
-        println!("Client {addr} connected");
+        log_info!("Client {addr} connected");
     }
 
     fn client_disconnected(&mut self, addr: SocketAddr) {
         self.clients.remove(&addr);
 
-        println!("Client {addr} disconnected");
+        log_info!("Client {addr} disconnected");
     }
 
     fn client_wrote(&self, addr: SocketAddr, bytes: &[u8]) {
@@ -85,7 +87,7 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
             },
             Err(RecvTimeoutError::Timeout) => {},
             Err(RecvTimeoutError::Disconnected) => {
-                eprintln!("Message receiver disconnected");
+                log_error!("Message receiver disconnected");
                 return Err(());
             },
         }
@@ -102,7 +104,6 @@ fn client(stream: Arc<TcpStream>, addr: SocketAddr, events: Sender<ClientEvent>)
     loop {
         match stream.as_ref().read(&mut buf) {
             Ok(0) => {
-                println!("disc");
                 events
                     .send(ClientEvent::Disconnect { addr })
                     .expect("Send client disconnected");
@@ -129,9 +130,9 @@ fn client(stream: Arc<TcpStream>, addr: SocketAddr, events: Sender<ClientEvent>)
 fn main() -> Result<(), ()> {
     let address = format!("{}:{}", ALL_HOSTS, PORT);
     let listener = TcpListener::bind(&address).map_err(|err| {
-        eprintln!("Could not bing {}: {}", address, err);
+        log_error!("Could not bing {}: {}", address, err);
     })?;
-    println!("Started server at {address}");
+    log_info!("Started server at {address}");
 
     let (events_sender, events_receiver) = channel();
     thread::spawn(|| server(events_receiver));
@@ -144,9 +145,9 @@ fn main() -> Result<(), ()> {
                     let events_sender = events_sender.clone();
                     thread::spawn(move || client(stream, client_addr, events_sender));
                 }
-                Err(err) => eprintln!("Could not get peer address: {}", err),
+                Err(err) => log_error!("Could not get peer address: {}", err),
             },
-            Err(err) => eprintln!("Could not accept connection: {}", err),
+            Err(err) => log_error!("Could not accept connection: {}", err),
         }
     }
 
