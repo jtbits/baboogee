@@ -1,0 +1,11 @@
+[package]
+name = "proto_dryb_derive"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+proc-macro = true
+
+[dependencies]
+proto_dryb = { path = "../proto_dryb" }

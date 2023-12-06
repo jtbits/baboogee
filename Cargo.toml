@@ -3,4 +3,6 @@
 members = [
 	"client",
 	"server",
+	"proto_dryb",
+	"proto_dryb_derive",
 ]
