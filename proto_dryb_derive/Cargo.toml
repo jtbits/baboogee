@@ -8,4 +8,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
+proc-macro2 = "1.0.70"
 proto_dryb = { path = "../proto_dryb" }
+quote = "1.0.33"
+syn = "2.0.39"

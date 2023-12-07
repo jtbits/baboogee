@@ -1,71 +1,62 @@
 extern crate proc_macro;
 
-use proc_macro::{TokenStream, TokenTree};
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{parse_macro_input, DeriveInput, Fields, DataEnum};
 
 #[proc_macro_derive(Serialize)]
-pub fn derive_serialize(item: TokenStream) -> TokenStream {
-    let mut result = String::default();
+pub fn derive_serialize(input: TokenStream) -> TokenStream {
+    let ast = parse_macro_input!(input as DeriveInput);
 
-    let mut iter = item.into_iter();
+    let name = &ast.ident;
 
-    if let TokenTree::Ident(token_type) = iter.next().unwrap() {
-        // check if it is struct
-        println!("type: {:?}", token_type);
-    } else {
-        panic!("first token should be ident struct")
-    }
-
-    let name = if let TokenTree::Ident(name) = iter.next().unwrap() {
-        println!("name: {:?}", name);
-        name.to_string()
-    } else {
-        panic!("second token should be ident name")
-    };
-    result.push_str("impl Serialize for ");
-    result.push_str(name.as_str());
-    result.push_str(" {\n");
-    result
-        .push_str("\tfn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {\n");
-
-    if let TokenTree::Group(g) = iter.next().unwrap() {
-        let mut var_tokens = g.stream().into_iter();
-        result.push_str("\t\tlet mut offset = 0;\n");
-        while let Some(TokenTree::Ident(ident)) = var_tokens.next() {
-            let var_name = ident.to_string();
-            result.push_str(
-                format!(
-                    "\t\toffset += self.{}.serialize(&mut buffer[offset..])?;\n",
-                    var_name
-                )
-                .as_str(),
-            );
-
-            loop {
-                match var_tokens.next() {
-                    None => break,
-                    Some(x) => {
-                        match x {
-                            TokenTree::Punct(p) => {
-                                // TODO bag if 2+ generics in type
-                                if p.as_char() == ',' {
-                                    break;
-                                }
-                            }
-                            _ => continue,
+    let expanded = match ast.data {
+        syn::Data::Struct(s) => {
+            match &s.fields {
+                Fields::Named(fields) => {
+                    let field_quotes = fields.named.iter().map(|f| {
+                        let field_name = &f.ident;
+                        quote! {
+                            offset += self.#field_name.serialize(&mut buf[offset..])?;
                         }
+                    });
+
+                    quote! {
+                        impl Serialize for #name {
+                            fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
+                                let mut offset = 0;
+
+                                #(#field_quotes)*
+
+                                Ok(offset)
+                            }
+                        }
+                    }
+                },
+                _ => panic!("MyMacro only works with structs with named fields"),
+            }
+        },
+        syn::Data::Enum(DataEnum { variants, .. }) => {
+            let variant_arms = variants.iter().enumerate().map(|(index, variant)| {
+                let variant_name = &variant.ident;
+                quote! { #name::#variant_name => #index as u8 }
+            });
+
+            quote! {
+                impl Serialize for #name {
+                    fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
+                        buf[0] = match self {
+                            #(#variant_arms,)*
+                        };
+
+                        Ok(1)
                     }
                 }
             }
-        }
-    } else {
-        todo!()
-    }
+        },
+        _ => panic!("MyMacro only works with structs and enums"),
+    };
 
-    result.push_str("\t\tOk(offset)\n");
-    result.push_str("\t}\n");
-    result.push_str("}");
-
-    println!("final result: \n'{}'", result);
-
-    result.parse().unwrap()
+    println!("generated: {}", expanded.to_string());
+    TokenStream::from(expanded)
 }

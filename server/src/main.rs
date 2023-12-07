@@ -153,3 +153,67 @@ fn main() -> Result<(), ()> {
 
     Ok(())
 }
+
+// TODO move somewhere else
+#[cfg(test)]
+mod tests {
+    use proto_dryb::*;
+    use proto_dryb_derive::*;
+
+    #[test]
+    fn testSimpleStruct() -> Result<(), SerializeError> {
+        #[derive(Serialize)]
+        struct Foo {
+            x: u8,
+        }
+
+        let x = Foo { x: 1 };
+        let mut buf = [0; 32];
+        x.serialize(&mut buf)?;
+        println!("{buf:?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn testStructWithEnum() -> Result<(), SerializeError> {
+        #[derive(Serialize)]
+        enum Bar {
+            A,
+            B,
+        }
+
+        #[derive(Serialize)]
+        struct Foo {
+            x: Bar,
+            y: Bar,
+            z: Bar,
+        }
+
+        let x = Foo { 
+            x: Bar::B,
+            y: Bar::A,
+            z: Bar::B,
+        };
+        let mut buf = [0; 32];
+        x.serialize(&mut buf)?;
+        println!("{buf:?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn testStructWithVec() -> Result<(), SerializeError> {
+        #[derive(Serialize)]
+        struct Foo {
+            x: Vec<u8>,
+        }
+
+        let x = Foo { x: vec![1,2,3,4,5] };
+        let mut buf = [0; 32];
+        x.serialize(&mut buf)?;
+        println!("{buf:?}");
+
+        Ok(())
+    }
+}

@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 logger = { path = "../logger" }
 game_core = { path = "../game_core" }
+proto_dryb = { path = "../proto_dryb" }
+proto_dryb_derive = { path = "../proto_dryb_derive" }

@@ -37,6 +37,29 @@ where
     }
 }
 
+impl<T> Serialize for Vec<T>
+where
+    T: Serialize,
+{
+    fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
+        if buf.len() < 1 {
+            return Err(SerializeError::BufferOverflow);
+        }
+
+        let len = self.len() as u8;
+        let _ = len.serialize(&mut buf[..])?;
+
+        let mut offset = 1;
+        for item in self {
+            let used = item.serialize(&mut buf[offset..])?;
+            offset += used;
+        }
+
+        Ok(offset)
+    }
+}
+
+
 // Primitive implimintations
 impl Serialize for u8 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {

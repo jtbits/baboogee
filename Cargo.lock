@@ -62,6 +62,10 @@ dependencies = [
 [[package]]
 name = "game_core"
 version = "0.1.0"
+dependencies = [
+ "proto_dryb",
+ "proto_dryb_derive",
+]
 
 [[package]]
 name = "libc"
@@ -125,6 +129,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro2"
+version = "1.0.70"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39278fbbf5fb4f646ce651690877f89d1c5811a3d4acb27700c1cb3cdb78fd3b"
+dependencies = [
+ "unicode-ident",
+]
+
+[[package]]
 name = "proto_dryb"
 version = "0.1.0"
 
@@ -132,7 +145,19 @@ version = "0.1.0"
 name = "proto_dryb_derive"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "proto_dryb",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "quote"
+version = "1.0.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5267fca4496028628a95160fc423a33e8b2e6af8a5302579e322e4b520293cae"
+dependencies = [
+ "proc-macro2",
 ]
 
 [[package]]
@@ -156,6 +181,8 @@ version = "0.1.0"
 dependencies = [
  "game_core",
  "logger",
+ "proto_dryb",
+ "proto_dryb_derive",
 ]
 
 [[package]]
@@ -193,6 +220,23 @@ name = "smallvec"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
+
+[[package]]
+name = "syn"
+version = "2.0.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23e78b90f2fcf45d3e842032ce32e3f2d1545ba6636271dcbf24fa306d87be7a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "unicode-ident"
+version = "1.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
 name = "wasi"
