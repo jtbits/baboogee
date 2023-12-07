@@ -59,7 +59,6 @@ where
     }
 }
 
-
 // Primitive implimintations
 impl Serialize for u8 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {

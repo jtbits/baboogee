@@ -170,7 +170,6 @@ mod tests {
         let x = Foo { x: 1 };
         let mut buf = [0; 32];
         x.serialize(&mut buf)?;
-        println!("{buf:?}");
 
         Ok(())
     }
@@ -190,14 +189,13 @@ mod tests {
             z: Bar,
         }
 
-        let x = Foo { 
+        let x = Foo {
             x: Bar::B,
             y: Bar::A,
             z: Bar::B,
         };
         let mut buf = [0; 32];
         x.serialize(&mut buf)?;
-        println!("{buf:?}");
 
         Ok(())
     }
@@ -209,10 +207,29 @@ mod tests {
             x: Vec<u8>,
         }
 
-        let x = Foo { x: vec![1,2,3,4,5] };
+        let x = Foo {
+            x: vec![1, 2, 3, 4, 5],
+        };
         let mut buf = [0; 32];
         x.serialize(&mut buf)?;
-        println!("{buf:?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn testEnumWithEnumAndStruct() -> Result<(), SerializeError> {
+        #[derive(Serialize)]
+        enum Foo {
+            A(u8),
+            B(u8, u8),
+            C(u8, u8, u8),
+            D,
+        }
+
+        let x = Foo::C(12, 34, 56);
+
+        let mut buf = [0; 32];
+        x.serialize(&mut buf)?;
 
         Ok(())
     }

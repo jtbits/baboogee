@@ -15,7 +15,7 @@ use crossterm::{
 };
 use game_core::constants::{LOCAL_HOST, PORT};
 
-const LOGO: &'static str = r#"
+const _LOGO: &'static str = r#"
 ██████   █████  ██████   ██████   ██████   ██████  ███████ ███████ 
 ██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██       ██      ██      
 ██████  ███████ ██████  ██    ██ ██    ██ ██   ███ █████   █████   
@@ -78,7 +78,7 @@ fn main() {
     stdout.queue(Clear(ClearType::All)).unwrap();
     stdout.queue(Hide).unwrap();
 
-    let mut buf = [0; 256];
+    let mut _buf = [0; 256];
     let mut client = Client::default();
     client.connect(LOCAL_HOST, PORT);
 
