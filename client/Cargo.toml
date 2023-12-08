@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 crossterm = "0.27.0"
 game_core = { path = "../game_core" }
+logger = { path = "../logger" }
+proto_dryb = { path = "../proto_dryb" }
+proto_dryb_derive = { path = "../proto_dryb_derive" }

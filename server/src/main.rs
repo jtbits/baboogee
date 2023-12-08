@@ -1,16 +1,16 @@
 use std::{
     collections::HashMap,
-    io::{self, Read},
+    io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
         mpsc::{channel, Receiver, RecvTimeoutError, Sender},
         Arc,
     },
     thread,
-    time::Duration,
+    time::Duration, ops::Deref,
 };
 
-use game_core::constants::{ALL_HOSTS, PORT};
+use game_core::{constants, protocol, types::{Map, Coords}, utils};
 use logger::{log, log_error, log_info};
 
 enum ClientEvent {
@@ -33,31 +33,46 @@ enum ClientEvent {
 
 struct Client {
     conn: Arc<TcpStream>,
+    coords: Coords,
 }
 
 impl Client {
-    fn new_from_conn(conn: Arc<TcpStream>) -> Self {
-        Self { conn }
+    fn new_from_conn(conn: Arc<TcpStream>, max_x: i16, max_y: i16) -> Self {
+        let coords = utils::generate_random_coords(max_x, max_y);
+        Self { conn, coords }
     }
 }
 
 struct Server {
     clients: HashMap<SocketAddr, Client>,
+    map: Map,
 }
 
 impl Server {
     fn new() -> Self {
+        let map = utils::generate_map();
         Self {
+            map,
             clients: HashMap::new(),
         }
     }
 
-    fn client_connected(&mut self, _buf: &mut [u8], addr: SocketAddr, stream: Arc<TcpStream>) {
-        let client = Client::new_from_conn(stream);
+    fn client_connected(&mut self, buf: &mut [u8], addr: SocketAddr, stream: Arc<TcpStream>) {
+        log_info!("Client {addr} connected");
+
+        let client = Client::new_from_conn(stream, self.map.height as i16, self.map.width as i16);
+
+        if let Ok(n) = protocol::generate_initial_payload(buf, client.coords, &self.map) {
+            if let Err(err) = client.conn.deref().write(&buf[..n]) {
+                log_error!("Could not write to client: {addr}, {err}");
+                return;
+            }
+        } else {
+            log_error!("Could not generate payload");
+            return;
+        }
 
         self.clients.insert(addr, client);
-
-        log_info!("Client {addr} connected");
     }
 
     fn client_disconnected(&mut self, addr: SocketAddr) {
@@ -73,7 +88,7 @@ impl Server {
 
 fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
     let mut server = Server::new();
-    let mut buf = [0; 256];
+    let mut buf = [0; 512];
 
     loop {
         match events.recv_timeout(Duration::from_millis(200)) {
@@ -128,7 +143,7 @@ fn client(stream: Arc<TcpStream>, addr: SocketAddr, events: Sender<ClientEvent>)
 }
 
 fn main() -> Result<(), ()> {
-    let address = format!("{}:{}", ALL_HOSTS, PORT);
+    let address = format!("{}:{}", constants::ALL_HOSTS, constants::PORT);
     let listener = TcpListener::bind(&address).map_err(|err| {
         log_error!("Could not bing {}: {}", address, err);
     })?;
@@ -242,11 +257,7 @@ mod tests {
         }
 
         let x = Foo {
-            a: vec![
-                (1, (2, 3)),
-                (4, (5, 6)),
-                (7, (8, 9)),
-            ]
+            a: vec![(1, (2, 3)), (4, (5, 6)), (7, (8, 9))],
         };
 
         let mut buf = [0; 32];

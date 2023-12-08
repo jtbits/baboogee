@@ -1,6 +1,9 @@
+use proto_dryb_derive::{Serialize, Deserialize};
+use proto_dryb::*;
+
 pub type Coords = (i16, i16);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum Block {
     Void,
     Grass,
@@ -14,6 +17,7 @@ pub enum Block {
     WallBottomRight,
 }
 
+#[derive(Default)]
 pub struct Map {
     pub height: u16,
     pub width: u16,

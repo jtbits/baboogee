@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 proto_dryb = { path = "../proto_dryb" }
 proto_dryb_derive = { path = "../proto_dryb_derive" }
+rand = "0.8.5"

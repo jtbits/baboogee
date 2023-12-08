@@ -21,9 +21,13 @@ pub trait Serialize {
 
 impl<T> Serialize for Option<T>
 where
-    T: Serialize,
+T: Serialize,
 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {
+        if buffer.len() < 1 {
+            return Err(SerializeError::BufferOverflow);
+        }
+
         match self {
             Some(x) => {
                 buffer[0] = 1;
@@ -39,7 +43,7 @@ where
 
 impl<T> Serialize for Vec<T>
 where
-    T: Serialize,
+T: Serialize,
 {
     fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
         if buf.len() < 1 {
@@ -59,26 +63,27 @@ where
     }
 }
 
-macro_rules! impl_tuple{
+macro_rules! impl_serialize_tuple{
     ($($idx:tt $t:tt),+) => {
         impl<$($t,)+> Serialize for ($($t,)+)
-        where
-            $($t: Serialize,)+
-        {
-            fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
-                let mut offset = 0;
+            where
+                $($t: Serialize,)+
+                {
+                    fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
+                        let mut offset = 0;
 
-                $(
-                    offset += self.$idx.serialize(&mut buf[offset..])?;
-                )+
+                        $(
+                            offset += self.$idx.serialize(&mut buf[offset..])?;
+                         )+
 
-                Ok(offset)
-            }
-        }
+                            Ok(offset)
+                    }
+                }
     };
 }
 
-impl_tuple!(0 A, 1 B);
+impl_serialize_tuple!(0 A, 1 B);
+// TODO add tuples of size 3,4..N when needed
 
 // Primitive implimintations
 impl Serialize for u8 {
@@ -149,5 +154,123 @@ impl fmt::Display for DeserializeError {
 impl Error for DeserializeError {}
 
 pub trait Deserialize: Sized {
-    fn deserialize(buffer: &[u8]) -> Result<Self, DeserializeError>;
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError>;
 }
+
+impl<T> Deserialize for Option<T>
+where 
+T: Deserialize {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        match buf[0] {
+            0 => {
+                Ok((None, 1))
+            },
+            1 => {
+                let (val, size) = T::deserialize(&buf[1..])?;
+                Ok((Some(val), size + 1))
+            },
+            _ => Err(DeserializeError::Invalid)
+        }
+    }
+}
+
+impl<T> Deserialize for Vec<T>
+where
+T: Deserialize
+{
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+
+        let len = buf[0] as usize;
+        let mut v = Vec::with_capacity(len);
+
+        let mut offset = 1;
+        for _ in 0..len {
+            let (val, size) = T::deserialize(&buf[offset..])?;
+            v.push(val);
+            offset += size;
+        }
+
+        Ok((v, offset))
+    }
+}
+
+macro_rules! impl_deserialize_tuple{
+    ($($idx:tt $t:tt $n:tt),+) => {
+        impl<$($t,)+> Deserialize for ($($t,)+)
+            where
+                $($t: Deserialize,)+
+                {
+                    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+                        let mut offset = 0;
+
+                        $(
+                            let ($n, size) = $t::deserialize(&buf[offset..])?;
+                            offset += size;
+                         )+
+
+                        Ok((($($n,)+), offset))
+                    }
+                }
+    };
+}
+
+impl_deserialize_tuple!(0 A a, 1 B b);
+// TODO add tuples of size 3,4..N when needed
+
+// Primitive implimintations
+impl Deserialize for u8 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        Ok((buf[0], 1))
+    } 
+}
+
+impl Deserialize for i8 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+
+        Ok((buf[0] as i8, 1))
+    } 
+}
+
+impl Deserialize for u16 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        let x1 = buf[0] as u16;
+        let x2 = buf[1] as u16;
+
+        Ok(((x1 << 8) | (x2 & 0xff), 2))
+    } 
+}
+
+impl Deserialize for i16 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        let x1 = buf[0] as i16;
+        let x2 = buf[1] as i16;
+
+        Ok(((x1 << 8) | (x2 & 0xff), 2))
+    } 
+}
+
+// TODO u32 i32 u64 i64

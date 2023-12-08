@@ -1,29 +1,33 @@
-use crate::types::{Coords, Map};
-use proto_dryb::*;
-use proto_dryb_derive::*;
+use crate::types::{Coords, Map, Block};
+use proto_dryb::{Serialize, SerializeError, Deserialize, DeserializeError};
+use proto_dryb_derive::{Serialize, Deserialize};
 
 use std::cmp::{max, min};
 
+#[derive(Serialize, Deserialize)]
 pub enum Packet {
     Server(ServerPacket),
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum ServerPacket {
     NewClientCoordsVisibleMap(NewClient),
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct NewClient {
     pub coords: Coords,
-    pub map: Vec<(u8, Coords)>,
+    pub map: Vec<(Block, Coords)>,
 }
 
 pub fn generate_initial_payload(
     buf: &mut [u8],
     coords: Coords,
     map: &Map,
-) -> Result<usize, SerializeError> {
-    //NewClient::new(coords, map, 5).serialize(buf)
-    Ok(0)
+    ) -> Result<usize, SerializeError> {
+    let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(coords, map, 5)));
+
+    packet.serialize(buf)
 }
 
 impl NewClient {
@@ -35,7 +39,7 @@ impl NewClient {
     }
 }
 
-fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(u8, Coords)> {
+fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(Block, Coords)> {
     let radius_square = radius as i16 * radius as i16;
 
     let top_left = (
@@ -58,7 +62,7 @@ fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(u8, Coords)> {
             let b = coords.1 - j;
 
             if a * a + b * b <= radius_square {
-                res.push((map.coords[i as usize][j as usize] as u8, (i, j)));
+                res.push((map.coords[i as usize][j as usize], (i, j)));
             }
         }
     }
