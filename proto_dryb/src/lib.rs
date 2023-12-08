@@ -59,6 +59,27 @@ where
     }
 }
 
+macro_rules! impl_tuple{
+    ($($idx:tt $t:tt),+) => {
+        impl<$($t,)+> Serialize for ($($t,)+)
+        where
+            $($t: Serialize,)+
+        {
+            fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
+                let mut offset = 0;
+
+                $(
+                    offset += self.$idx.serialize(&mut buf[offset..])?;
+                )+
+
+                Ok(offset)
+            }
+        }
+    };
+}
+
+impl_tuple!(0 A, 1 B);
+
 // Primitive implimintations
 impl Serialize for u8 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {

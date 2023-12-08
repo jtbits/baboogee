@@ -12,6 +12,11 @@ pub enum ServerPacket {
     NewClientCoordsVisibleMap(NewClient),
 }
 
+pub struct NewClient {
+    pub coords: Coords,
+    pub map: Vec<(u8, Coords)>,
+}
+
 pub fn generate_initial_payload(
     buf: &mut [u8],
     coords: Coords,
@@ -19,12 +24,6 @@ pub fn generate_initial_payload(
 ) -> Result<usize, SerializeError> {
     //NewClient::new(coords, map, 5).serialize(buf)
     Ok(0)
-}
-
-//#[derive(Serialize)]
-pub struct NewClient {
-    pub coords: Coords,
-    pub map: Vec<(u8, Coords)>,
 }
 
 impl NewClient {

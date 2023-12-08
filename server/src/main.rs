@@ -233,4 +233,25 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn testStructWithVecOfTupples() -> Result<(), SerializeError> {
+        #[derive(Serialize)]
+        struct Foo {
+            a: Vec<(u8, (u8, u8))>,
+        }
+
+        let x = Foo {
+            a: vec![
+                (1, (2, 3)),
+                (4, (5, 6)),
+                (7, (8, 9)),
+            ]
+        };
+
+        let mut buf = [0; 32];
+        x.serialize(&mut buf)?;
+
+        Ok(())
+    }
 }
