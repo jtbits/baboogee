@@ -15,6 +15,22 @@ pub enum ServerPacket {
     NewClientCoordsVisibleMap(NewClient),
     NewCoords(NewCoords),
     OtherPlayerMoved(OtherPlayerMoved),
+    OtherPlayerMovedOutsideRadius(OtherPlayerMovedOutsideRadius),
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OtherPlayerMovedOutsideRadius {
+    pub id: u32,
+}
+
+pub fn generate_move_outside_radius_notify_payload(
+    buf: &mut [u8],
+    id: u32,
+) -> Result<usize, SerializeError> {
+    let opmor = OtherPlayerMovedOutsideRadius { id };
+    let packet = Packet::Server(ServerPacket::OtherPlayerMovedOutsideRadius(opmor));
+
+    packet.serialize(buf)
 }
 
 #[derive(Serialize, Deserialize)]

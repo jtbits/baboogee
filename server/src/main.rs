@@ -132,6 +132,7 @@ impl Server {
                                         client.radius,
                                     )
                                 {
+                                    let prev_player_coords = client.coords;
                                     client.coords = new_player_coord;
                                     let client_id = client.id;
                                     let visible_players = self
@@ -142,6 +143,7 @@ impl Server {
                                         })
                                         .map(|(_, c)| (c.borrow().id, c.borrow().coords))
                                         .collect();
+                                    // send new coords to player
                                     if let Ok(n) = protocol::generate_new_coords_payload(
                                         buf,
                                         new_player_coord,
@@ -152,39 +154,69 @@ impl Server {
                                             log_error!("Could not write to client: {addr}, {err}");
                                             return;
                                         }
-                                        // send to other players new coords of this if in radius
-                                        for (&other_addr, other_client) in
-                                            self.clients.iter().filter(|(&a, c)| {
-                                                a != addr
-                                                    && c.borrow().sees_coords(new_player_coord)
-                                            })
-                                        {
-                                            log_info!(
-                                                "Sending move notification to player with id: {}",
-                                                client_id
-                                            );
-                                            if let Ok(n) = protocol::generate_move_notify_payload(
-                                                buf,
-                                                new_player_coord,
-                                                client_id,
-                                            ) {
-                                                if let Err(err) = other_client
-                                                    .borrow_mut()
-                                                    .conn
-                                                    .deref()
-                                                    .write(&buf[..n])
-                                                {
-                                                    log_error!("Could not notify client {other_addr} about the move: {err}");
-                                                }
-                                            } else {
-                                                log_error!("Could not generate payload: OtherPlayerCoords after move")
-                                            }
-                                        }
                                     } else {
                                         log_error!(
                                             "Could not generate payload: NewCoords after move"
                                         );
                                         return;
+                                    }
+
+                                    // send to other players new coords of this if in radius
+                                    for (&other_addr, other_client) in
+                                        self.clients.iter().filter(|(&a, c)| {
+                                            a != addr && c.borrow().sees_coords(new_player_coord)
+                                        })
+                                    {
+                                        log_info!(
+                                            "Sending move notification to player with id: {}",
+                                            client_id
+                                        );
+                                        if let Ok(n) = protocol::generate_move_notify_payload(
+                                            buf,
+                                            new_player_coord,
+                                            client_id,
+                                        ) {
+                                            if let Err(err) = other_client
+                                                .borrow_mut()
+                                                .conn
+                                                .deref()
+                                                .write(&buf[..n])
+                                            {
+                                                log_error!("Could not notify client {other_addr} about the move: {err}");
+                                            }
+                                        } else {
+                                            log_error!("Could not generate payload: OtherPlayerMoved after move")
+                                        }
+                                    }
+
+                                    // sent to other players if player moved outside from their radius
+                                    for (&other_addr, other_client) in
+                                        self.clients.iter().filter(|(&a, c)| {
+                                            a != addr
+                                                && c.borrow().sees_coords(prev_player_coords)
+                                                && !c.borrow().sees_coords(new_player_coord)
+                                        })
+                                    {
+                                        log_info!(
+                                            "Sending move outside radius notification to player with id: {}",
+                                            client_id
+                                        );
+                                        if let Ok(n) =
+                                            protocol::generate_move_outside_radius_notify_payload(
+                                                buf, client_id,
+                                            )
+                                        {
+                                            if let Err(err) = other_client
+                                                .borrow_mut()
+                                                .conn
+                                                .deref()
+                                                .write(&buf[..n])
+                                            {
+                                                log_error!("Could not notify client {other_addr} about the move outside radius: {err}");
+                                            }
+                                        } else {
+                                            log_error!("Could not generate payload: OtherPlayerMovedOutsideRadius after move")
+                                        }
                                     }
                                 } else {
                                     log_info!("player cannot move");

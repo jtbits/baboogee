@@ -67,7 +67,7 @@ impl From<BlockWrapper> for StyledContent<char> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum PlayerState {
     InsideRadius,
     OutsideRadius,
@@ -148,24 +148,43 @@ impl Client {
 
     fn update_other_player_coords_after_move(&mut self, players: &Vec<(u32, Coords)>) {
         self.update_other_player_coords_after_he_moves(players);
+
         for (&id, p) in self.other_players.iter_mut() {
             p.state = if players.iter().any(|p| p.0 == id) {
                 PlayerState::InsideRadius
             } else {
                 PlayerState::OutsideRadius
-            };
+            }
         }
-    }
 
+        self.other_players.retain(|_, p| {
+            !(inside_radius(self.coords, self.radius as i16, p.coords)
+                && p.state == PlayerState::OutsideRadius)
+        });
+    }
 
     fn update_other_player_coords_after_he_moves(&mut self, players: &Vec<(u32, Coords)>) {
         for (id, coords) in players.iter() {
             self.other_players
                 .entry(*id)
                 .and_modify(|p| p.coords = *coords)
-                .or_insert(Player { id: *id, coords: *coords, state: PlayerState::InsideRadius });
+                .or_insert(Player {
+                    id: *id,
+                    coords: *coords,
+                    state: PlayerState::InsideRadius,
+                });
         }
     }
+
+    fn remove_player(&mut self, id: u32) {
+        self.other_players.remove(&id);
+    }
+}
+
+fn inside_radius((x1, y1): Coords, r: i16, (x2, y2): Coords) -> bool {
+    let diff_sqr = (x1 - x2).pow(2) + (y1 - y2).pow(2);
+    let radius_sqr = r.pow(2);
+    diff_sqr <= radius_sqr
 }
 
 fn get_padding(a: Coords, b: (u16, u16)) -> Coords {
@@ -335,50 +354,58 @@ fn main() {
                     Ok(n) => {
                         if let Ok((packet, _)) = Packet::deserialize(&buf[..n]) {
                             match packet {
-                                Packet::Server(s) => {
-                                    match s {
-                                        ServerPacket::NewClientCoordsVisibleMap(nc) => {
-                                            client.coords = nc.coords;
-                                            client.visible_map = nc.map;
+                                Packet::Server(s) => match s {
+                                    ServerPacket::NewClientCoordsVisibleMap(nc) => {
+                                        client.coords = nc.coords;
+                                        client.visible_map = nc.map;
 
-                                            stdout.queue(Clear(ClearType::All)).unwrap();
-                                            draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(
-                                                &mut stdout,
-                                                terminal_dimensions.0,
-                                                client.coords,
-                                            );
-                                        }
-                                        ServerPacket::NewCoords(mut nc) => {
-                                            client.coords = nc.center;
-                                            client.remove_non_visible();
-                                            client.visible_map.append(&mut nc.coords);
-                                            client.update_other_player_coords_after_move(&nc.players);
-                                            //client.visible_map = nc.coords;
-
-                                            stdout.queue(Clear(ClearType::All)).unwrap();
-                                            draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(
-                                                &mut stdout,
-                                                terminal_dimensions.0,
-                                                client.coords,
-                                            );
-                                        }
-                                        ServerPacket::OtherPlayerMoved(opm) => {
-                                            client.update_other_player_coords_after_he_moves(&vec![(
-                                                opm.id, opm.coords,
-                                            )]);
-
-                                            stdout.queue(Clear(ClearType::All)).unwrap();
-                                            draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(
-                                                &mut stdout,
-                                                terminal_dimensions.0,
-                                                client.coords,
-                                            );
-                                        }
+                                        stdout.queue(Clear(ClearType::All)).unwrap();
+                                        draw_map(&mut stdout, terminal_dimensions, &client);
+                                        draw_coords(
+                                            &mut stdout,
+                                            terminal_dimensions.0,
+                                            client.coords,
+                                        );
                                     }
-                                }
+                                    ServerPacket::NewCoords(mut nc) => {
+                                        client.coords = nc.center;
+                                        client.remove_non_visible();
+                                        client.visible_map.append(&mut nc.coords);
+                                        client.update_other_player_coords_after_move(&nc.players);
+
+                                        stdout.queue(Clear(ClearType::All)).unwrap();
+                                        draw_map(&mut stdout, terminal_dimensions, &client);
+                                        draw_coords(
+                                            &mut stdout,
+                                            terminal_dimensions.0,
+                                            client.coords,
+                                        );
+                                    }
+                                    ServerPacket::OtherPlayerMoved(opm) => {
+                                        client.update_other_player_coords_after_he_moves(&vec![(
+                                            opm.id, opm.coords,
+                                        )]);
+
+                                        stdout.queue(Clear(ClearType::All)).unwrap();
+                                        draw_map(&mut stdout, terminal_dimensions, &client);
+                                        draw_coords(
+                                            &mut stdout,
+                                            terminal_dimensions.0,
+                                            client.coords,
+                                        );
+                                    }
+                                    ServerPacket::OtherPlayerMovedOutsideRadius(opmor) => {
+                                        client.remove_player(opmor.id);
+
+                                        stdout.queue(Clear(ClearType::All)).unwrap();
+                                        draw_map(&mut stdout, terminal_dimensions, &client);
+                                        draw_coords(
+                                            &mut stdout,
+                                            terminal_dimensions.0,
+                                            client.coords,
+                                        );
+                                    }
+                                },
                                 _ => panic!("Server cannot send client packets"),
                             }
                         } else {
