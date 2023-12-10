@@ -130,11 +130,13 @@ impl Client {
         });
     }
 
-    fn update_other_player_coords(&mut self, id: u32, coords: Coords) {
-        self.other_players
-            .entry(id)
-            .and_modify(|p| p.coords = coords)
-            .or_insert(Player { id, coords });
+    fn update_other_player_coords(&mut self, players: Vec<(u32, Coords)>) {
+        for (id, coords) in players {
+            self.other_players
+                .entry(id)
+                .and_modify(|p| p.coords = coords)
+                .or_insert(Player { id, coords });
+        }
     }
 }
 
@@ -313,24 +315,39 @@ fn main() {
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
                                             draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
+                                            draw_coords(
+                                                &mut stdout,
+                                                terminal_dimensions.0,
+                                                client.coords,
+                                            );
                                         }
                                         ServerPacket::NewCoords(mut nc) => {
                                             client.coords = nc.center;
                                             client.remove_non_visible();
                                             client.visible_map.append(&mut nc.coords);
+                                            client.update_other_player_coords(nc.players);
                                             //client.visible_map = nc.coords;
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
                                             draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
+                                            draw_coords(
+                                                &mut stdout,
+                                                terminal_dimensions.0,
+                                                client.coords,
+                                            );
                                         }
                                         ServerPacket::OtherPlayerMoved(opm) => {
-                                            client.update_other_player_coords(opm.id, opm.coords);
+                                            client.update_other_player_coords(vec![(
+                                                opm.id, opm.coords,
+                                            )]);
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
                                             draw_map(&mut stdout, terminal_dimensions, &client);
-                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
+                                            draw_coords(
+                                                &mut stdout,
+                                                terminal_dimensions.0,
+                                                client.coords,
+                                            );
                                         }
                                     }
                                 }

@@ -1,8 +1,9 @@
 use std::{
+    cell::RefCell,
     collections::HashMap,
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    ops::{Deref, DerefMut},
+    ops::Deref,
     sync::{
         mpsc::{channel, Receiver, RecvTimeoutError, Sender},
         Arc,
@@ -67,7 +68,7 @@ impl Client {
 }
 
 struct Server {
-    clients: HashMap<SocketAddr, Client>,
+    clients: HashMap<SocketAddr, RefCell<Client>>,
     id_counter: u32,
     map: Map,
 }
@@ -104,7 +105,7 @@ impl Server {
             return;
         }
 
-        self.clients.insert(addr, client);
+        self.clients.insert(addr, RefCell::new(client));
     }
 
     fn client_disconnected(&mut self, addr: SocketAddr) {
@@ -114,7 +115,8 @@ impl Server {
     }
 
     fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) {
-        if let Some(client) = self.clients.get_mut(&addr) {
+        if let Some(client) = self.clients.get(&addr) {
+            let mut client = client.borrow_mut();
             if let Ok((packet, _)) = Packet::deserialize(bytes) {
                 match packet {
                     Packet::Client(pc) => {
@@ -132,23 +134,31 @@ impl Server {
                                 {
                                     client.coords = new_player_coord;
                                     let client_id = client.id;
+                                    let visible_players = self
+                                        .clients
+                                        .iter()
+                                        .filter(|(&a, c)| {
+                                            a != addr && client.sees_coords(c.borrow().coords)
+                                        })
+                                        .map(|(_, c)| (c.borrow().id, c.borrow().coords))
+                                        .collect();
                                     if let Ok(n) = protocol::generate_new_coords_payload(
                                         buf,
                                         new_player_coord,
                                         new_visiple_coord,
+                                        visible_players,
                                     ) {
                                         if let Err(err) = client.conn.deref().write(&buf[..n]) {
                                             log_error!("Could not write to client: {addr}, {err}");
                                             return;
                                         }
                                         // send to other players new coords of this if in radius
-                                        for (&other_addr, other_client) in self.clients.iter() {
-                                            if other_addr == addr {
-                                                continue;
-                                            }
-                                            if !other_client.sees_coords(new_player_coord) {
-                                                continue;
-                                            }
+                                        for (&other_addr, other_client) in
+                                            self.clients.iter().filter(|(&a, c)| {
+                                                a != addr
+                                                    && c.borrow().sees_coords(new_player_coord)
+                                            })
+                                        {
                                             log_info!(
                                                 "Sending move notification to player with id: {}",
                                                 client_id
@@ -158,8 +168,11 @@ impl Server {
                                                 new_player_coord,
                                                 client_id,
                                             ) {
-                                                if let Err(err) =
-                                                    other_client.conn.deref().write(&buf[..n])
+                                                if let Err(err) = other_client
+                                                    .borrow_mut()
+                                                    .conn
+                                                    .deref()
+                                                    .write(&buf[..n])
                                                 {
                                                     log_error!("Could not notify client {other_addr} about the move: {err}");
                                                 }

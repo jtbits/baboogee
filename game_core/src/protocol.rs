@@ -83,11 +83,16 @@ pub fn generate_initial_payload(
 pub struct NewCoords {
     pub center: Coords,
     pub coords: Vec<(Block, Coords)>,
+    pub players: Vec<(u32, Coords)>,
 }
 
 impl NewCoords {
-    fn new(center: (i16, i16), coords: Vec<(Block, Coords)>) -> Self {
-        Self { center, coords }
+    fn new(center: (i16, i16), coords: Vec<(Block, Coords)>, players: Vec<(u32, Coords)>) -> Self {
+        Self {
+            center,
+            coords,
+            players,
+        }
     }
 }
 
@@ -95,10 +100,12 @@ pub fn generate_new_coords_payload(
     buf: &mut [u8],
     new_player_coord: Coords,
     new_visiple_coord: Vec<(Block, Coords)>,
+    visible_players: Vec<(u32, Coords)>,
 ) -> Result<usize, SerializeError> {
     let packet = Packet::Server(ServerPacket::NewCoords(NewCoords::new(
         new_player_coord,
         new_visiple_coord,
+        visible_players,
     )));
 
     packet.serialize(buf)
