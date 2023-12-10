@@ -59,8 +59,9 @@ impl Client {
     }
 
     fn sees_coords(&self, (other_x, other_y): (i16, i16)) -> bool {
-        let diff_sqr = (self.coords.0 - other_x).pow(2) + (self.coords.1 - other_y);
+        let diff_sqr = (self.coords.0 - other_x).pow(2) + (self.coords.1 - other_y).pow(2);
         let radius_sqr = (self.radius as i16).pow(2);
+        log_info!("diff_sqr: {}, radius_sqr: {}", diff_sqr, radius_sqr);
         diff_sqr <= radius_sqr
     }
 }

@@ -230,6 +230,15 @@ fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) {
         .expect("PrintStyledContent5");
 }
 
+fn draw_coords(stdout: &mut io::Stdout, terminal_height: u16, (x, y): Coords) {
+    stdout
+        .queue(MoveTo(0, terminal_height))
+        .expect(format!("MoveTo5, x: {}, y: {}", 0, x).as_str());
+    stdout
+        .queue(PrintStyledContent(format!("({:3}:{:3})", x, y).green()))
+        .expect("PrintStyledContent5");
+}
+
 fn main() {
     terminal::enable_raw_mode().expect("failed to enable raw mode");
     let mut stdout = stdout();
@@ -251,6 +260,7 @@ fn main() {
                         if let KeyCode::Char(c) = event.code {
                             if c == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
                                 terminal::disable_raw_mode().unwrap();
+                                stdout.queue(Clear(ClearType::All)).unwrap();
                                 exit(0);
                             }
 
@@ -287,8 +297,9 @@ fn main() {
                 match s.read(&mut buf) {
                     Ok(0) => {
                         client.stream = None;
-                        log_info!("Server closed the connection");
                         terminal::disable_raw_mode().unwrap();
+                        stdout.queue(Clear(ClearType::All)).unwrap();
+                        log_info!("Server closed the connection");
                         exit(0);
                     }
                     Ok(n) => {
@@ -302,6 +313,7 @@ fn main() {
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
                                             draw_map(&mut stdout, terminal_dimensions, &client);
+                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
                                         }
                                         ServerPacket::NewCoords(mut nc) => {
                                             client.coords = nc.center;
@@ -311,12 +323,14 @@ fn main() {
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
                                             draw_map(&mut stdout, terminal_dimensions, &client);
+                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
                                         }
                                         ServerPacket::OtherPlayerMoved(opm) => {
-                                            stdout.queue(Clear(ClearType::All)).unwrap();
-
-                                            draw_map(&mut stdout, terminal_dimensions, &client);
                                             client.update_other_player_coords(opm.id, opm.coords);
+
+                                            stdout.queue(Clear(ClearType::All)).unwrap();
+                                            draw_map(&mut stdout, terminal_dimensions, &client);
+                                            draw_coords(&mut stdout, terminal_dimensions.0, client.coords);
                                         }
                                     }
                                 }
@@ -336,11 +350,11 @@ fn main() {
                 }
             }
 
-            //draw_line(
-            //    &mut stdout,
-            //    terminal_dimensions.1 - 2,
-            //    terminal_dimensions.0 as usize,
-            //);
+            draw_line(
+                &mut stdout,
+                terminal_dimensions.1 - 2,
+                terminal_dimensions.0 as usize,
+            );
 
             stdout.flush().expect("flush");
 
