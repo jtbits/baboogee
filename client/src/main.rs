@@ -67,9 +67,25 @@ impl From<BlockWrapper> for StyledContent<char> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum PlayerState {
+    InsideRadius,
+    OutsideRadius,
+}
+
+impl From<PlayerState> for StyledContent<char> {
+    fn from(value: PlayerState) -> Self {
+        match value {
+            PlayerState::InsideRadius => 'E'.red(),
+            PlayerState::OutsideRadius => '?'.yellow(),
+        }
+    }
+}
+
 struct Player {
     id: u32,
     coords: Coords,
+    state: PlayerState,
 }
 
 struct Client {
@@ -130,12 +146,24 @@ impl Client {
         });
     }
 
-    fn update_other_player_coords(&mut self, players: Vec<(u32, Coords)>) {
-        for (id, coords) in players {
+    fn update_other_player_coords_after_move(&mut self, players: &Vec<(u32, Coords)>) {
+        self.update_other_player_coords_after_he_moves(players);
+        for (&id, p) in self.other_players.iter_mut() {
+            p.state = if players.iter().any(|p| p.0 == id) {
+                PlayerState::InsideRadius
+            } else {
+                PlayerState::OutsideRadius
+            };
+        }
+    }
+
+
+    fn update_other_player_coords_after_he_moves(&mut self, players: &Vec<(u32, Coords)>) {
+        for (id, coords) in players.iter() {
             self.other_players
-                .entry(id)
-                .and_modify(|p| p.coords = coords)
-                .or_insert(Player { id, coords });
+                .entry(*id)
+                .and_modify(|p| p.coords = *coords)
+                .or_insert(Player { id: *id, coords: *coords, state: PlayerState::InsideRadius });
         }
     }
 }
@@ -196,15 +224,15 @@ fn draw_map(
     }
 
     // print other_players
-    for (x, y) in other_players
+    for (state, (x, y)) in other_players
         .values()
-        .map(|p| to_absolute(p.coords, padding))
+        .map(|p| (p.state, to_absolute(p.coords, padding)))
     {
         stdout
             .queue(MoveTo(y as u16, x as u16))
             .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
         stdout
-            .queue(PrintStyledContent(BlockWrapper(Block::OtherPlayer).into()))
+            .queue(PrintStyledContent(state.into()))
             .expect("PrintStyledContent3");
     }
 
@@ -325,7 +353,7 @@ fn main() {
                                             client.coords = nc.center;
                                             client.remove_non_visible();
                                             client.visible_map.append(&mut nc.coords);
-                                            client.update_other_player_coords(nc.players);
+                                            client.update_other_player_coords_after_move(&nc.players);
                                             //client.visible_map = nc.coords;
 
                                             stdout.queue(Clear(ClearType::All)).unwrap();
@@ -337,7 +365,7 @@ fn main() {
                                             );
                                         }
                                         ServerPacket::OtherPlayerMoved(opm) => {
-                                            client.update_other_player_coords(vec![(
+                                            client.update_other_player_coords_after_he_moves(&vec![(
                                                 opm.id, opm.coords,
                                             )]);
 
