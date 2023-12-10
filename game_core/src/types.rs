@@ -1,13 +1,16 @@
-use proto_dryb_derive::{Serialize, Deserialize};
 use proto_dryb::*;
+use proto_dryb_derive::{Deserialize, Serialize};
 
 pub type Coords = (i16, i16);
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+pub type MoveCoords = (Coords, Vec<(Block, Coords)>);
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub enum Block {
     Void,
     Grass,
     Player,
+    OtherPlayer,
 
     WallHorizontal,
     WallVertical,

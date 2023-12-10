@@ -2,16 +2,23 @@ use std::{
     collections::HashMap,
     io::{self, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    ops::{Deref, DerefMut},
     sync::{
         mpsc::{channel, Receiver, RecvTimeoutError, Sender},
         Arc,
     },
     thread,
-    time::Duration, ops::Deref,
+    time::Duration,
 };
 
-use game_core::{constants, protocol, types::{Map, Coords}, utils};
+use game_core::{
+    constants,
+    protocol::{self, ClientPacket, Packet},
+    types::{Coords, Map},
+    utils,
+};
 use logger::{log, log_error, log_info};
+use proto_dryb::Deserialize;
 
 enum ClientEvent {
     Connect {
@@ -31,20 +38,36 @@ enum ClientEvent {
     },
 }
 
-struct Client {
+pub struct Client {
+    id: u32,
     conn: Arc<TcpStream>,
     coords: Coords,
+    radius: u8,
 }
 
 impl Client {
-    fn new_from_conn(conn: Arc<TcpStream>, max_x: i16, max_y: i16) -> Self {
+    fn new_from_conn(conn: Arc<TcpStream>, max_x: i16, max_y: i16, id: &mut u32) -> Self {
         let coords = utils::generate_random_coords(max_x, max_y);
-        Self { conn, coords }
+        let new = Self {
+            conn,
+            coords,
+            radius: 5,
+            id: *id,
+        };
+        *id += 1;
+        new
+    }
+
+    fn sees_coords(&self, (other_x, other_y): (i16, i16)) -> bool {
+        let diff_sqr = (self.coords.0 - other_x).pow(2) + (self.coords.1 - other_y);
+        let radius_sqr = (self.radius as i16).pow(2);
+        diff_sqr <= radius_sqr
     }
 }
 
 struct Server {
     clients: HashMap<SocketAddr, Client>,
+    id_counter: u32,
     map: Map,
 }
 
@@ -53,6 +76,7 @@ impl Server {
         let map = utils::generate_map();
         Self {
             map,
+            id_counter: 0,
             clients: HashMap::new(),
         }
     }
@@ -60,9 +84,16 @@ impl Server {
     fn client_connected(&mut self, buf: &mut [u8], addr: SocketAddr, stream: Arc<TcpStream>) {
         log_info!("Client {addr} connected");
 
-        let client = Client::new_from_conn(stream, self.map.height as i16, self.map.width as i16);
+        let client = Client::new_from_conn(
+            stream,
+            self.map.height as i16,
+            self.map.width as i16,
+            &mut self.id_counter,
+        );
 
-        if let Ok(n) = protocol::generate_initial_payload(buf, client.coords, &self.map) {
+        if let Ok(n) =
+            protocol::generate_initial_payload(buf, client.coords, client.radius, &self.map)
+        {
             if let Err(err) = client.conn.deref().write(&buf[..n]) {
                 log_error!("Could not write to client: {addr}, {err}");
                 return;
@@ -76,13 +107,82 @@ impl Server {
     }
 
     fn client_disconnected(&mut self, addr: SocketAddr) {
-        self.clients.remove(&addr);
-
         log_info!("Client {addr} disconnected");
+
+        self.clients.remove(&addr);
     }
 
-    fn client_wrote(&self, addr: SocketAddr, bytes: &[u8]) {
-        todo!()
+    fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) {
+        if let Some(client) = self.clients.get_mut(&addr) {
+            if let Ok((packet, _)) = Packet::deserialize(bytes) {
+                match packet {
+                    Packet::Client(pc) => {
+                        match pc {
+                            ClientPacket::Move(step) => {
+                                log_info!("Got Move client packet with step: {:?}", step);
+                                // check if can (returns option of new coord)
+                                if let Some((new_player_coord, new_visiple_coord)) =
+                                    utils::try_move_in_map(
+                                        &self.map,
+                                        client.coords,
+                                        step,
+                                        client.radius,
+                                    )
+                                {
+                                    client.coords = new_player_coord;
+                                    let client_id = client.id;
+                                    if let Ok(n) = protocol::generate_new_coords_payload(
+                                        buf,
+                                        new_player_coord,
+                                        new_visiple_coord,
+                                    ) {
+                                        if let Err(err) = client.conn.deref().write(&buf[..n]) {
+                                            log_error!("Could not write to client: {addr}, {err}");
+                                            return;
+                                        }
+                                        // send to other players new coords of this if in radius
+                                        for (&other_addr, other_client) in self.clients.iter() {
+                                            if other_addr == addr {
+                                                continue;
+                                            }
+                                            if !other_client.sees_coords(new_player_coord) {
+                                                continue;
+                                            }
+                                            log_info!(
+                                                "Sending move notification to player with id: {}",
+                                                client_id
+                                            );
+                                            if let Ok(n) = protocol::generate_move_notify_payload(
+                                                buf,
+                                                new_player_coord,
+                                                client_id,
+                                            ) {
+                                                if let Err(err) =
+                                                    other_client.conn.deref().write(&buf[..n])
+                                                {
+                                                    log_error!("Could not notify client {other_addr} about the move: {err}");
+                                                }
+                                            } else {
+                                                log_error!("Could not generate payload: OtherPlayerCoords after move")
+                                            }
+                                        }
+                                    } else {
+                                        log_error!(
+                                            "Could not generate payload: NewCoords after move"
+                                        );
+                                        return;
+                                    }
+                                } else {
+                                    log_info!("player cannot move");
+                                    // TODO send CannotMove
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 
@@ -97,7 +197,7 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
                     server.client_connected(&mut buf, addr, stream)
                 }
                 ClientEvent::Disconnect { addr } => server.client_disconnected(addr),
-                ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes),
+                ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes, &mut buf),
                 ClientEvent::Error { addr, err } => eprintln!("Client error: {}, {}", addr, err),
             },
             Err(RecvTimeoutError::Timeout) => {}

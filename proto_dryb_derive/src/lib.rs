@@ -147,14 +147,17 @@ pub fn derive_deserialize(input: TokenStream) -> TokenStream {
                 })
                 .collect::<Vec<_>>();
 
-                let field_name_quotes = fields.named.iter().map(|f| {
-                    let field_name = &f.ident;
+                let field_name_quotes = fields
+                    .named
+                    .iter()
+                    .map(|f| {
+                        let field_name = &f.ident;
 
-                    quote! {
-                        #field_name,
-                    }
-                })
-                .collect::<Vec<_>>();
+                        quote! {
+                            #field_name,
+                        }
+                    })
+                    .collect::<Vec<_>>();
 
                 quote! {
                     impl Deserialize for #name {
@@ -251,6 +254,5 @@ pub fn derive_deserialize(input: TokenStream) -> TokenStream {
         _ => panic!("Deserialize only works with structs and enums"),
     };
 
-    println!("{}", expanded.to_string());
     TokenStream::from(expanded)
 }

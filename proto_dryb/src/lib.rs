@@ -21,7 +21,7 @@ pub trait Serialize {
 
 impl<T> Serialize for Option<T>
 where
-T: Serialize,
+    T: Serialize,
 {
     fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {
         if buffer.len() < 1 {
@@ -43,7 +43,7 @@ T: Serialize,
 
 impl<T> Serialize for Vec<T>
 where
-T: Serialize,
+    T: Serialize,
 {
     fn serialize(&self, buf: &mut [u8]) -> Result<usize, SerializeError> {
         if buf.len() < 1 {
@@ -136,7 +136,37 @@ impl Serialize for i16 {
     }
 }
 
-// TODO u32 i32 u64 i64
+impl Serialize for u32 {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {
+        if buffer.len() < 4 {
+            return Err(SerializeError::BufferOverflow);
+        }
+
+        buffer[0] = (*self >> 24) as u8;
+        buffer[1] = (*self >> 16) as u8;
+        buffer[2] = (*self >> 8) as u8;
+        buffer[3] = *self as u8;
+
+        Ok(4)
+    }
+}
+
+impl Serialize for i32 {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, SerializeError> {
+        if buffer.len() < 4 {
+            return Err(SerializeError::BufferOverflow);
+        }
+
+        buffer[0] = (*self >> 24) as u8;
+        buffer[1] = (*self >> 16) as u8;
+        buffer[2] = (*self >> 8) as u8;
+        buffer[3] = *self as u8;
+
+        Ok(4)
+    }
+}
+
+// TODO u64 i64
 
 #[derive(Debug)]
 pub enum DeserializeError {
@@ -158,35 +188,33 @@ pub trait Deserialize: Sized {
 }
 
 impl<T> Deserialize for Option<T>
-where 
-T: Deserialize {
-    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
-        if buf.len() < 1 {
-            return Err(DeserializeError::Invalid);
-        }
-
-        match buf[0] {
-            0 => {
-                Ok((None, 1))
-            },
-            1 => {
-                let (val, size) = T::deserialize(&buf[1..])?;
-                Ok((Some(val), size + 1))
-            },
-            _ => Err(DeserializeError::Invalid)
-        }
-    }
-}
-
-impl<T> Deserialize for Vec<T>
 where
-T: Deserialize
+    T: Deserialize,
 {
     fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
         if buf.len() < 1 {
             return Err(DeserializeError::Invalid);
         }
 
+        match buf[0] {
+            0 => Ok((None, 1)),
+            1 => {
+                let (val, size) = T::deserialize(&buf[1..])?;
+                Ok((Some(val), size + 1))
+            }
+            _ => Err(DeserializeError::Invalid),
+        }
+    }
+}
+
+impl<T> Deserialize for Vec<T>
+where
+    T: Deserialize,
+{
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 1 {
+            return Err(DeserializeError::Invalid);
+        }
 
         let len = buf[0] as usize;
         let mut v = Vec::with_capacity(len);
@@ -233,7 +261,7 @@ impl Deserialize for u8 {
         }
 
         Ok((buf[0], 1))
-    } 
+    }
 }
 
 impl Deserialize for i8 {
@@ -242,9 +270,8 @@ impl Deserialize for i8 {
             return Err(DeserializeError::Invalid);
         }
 
-
         Ok((buf[0] as i8, 1))
-    } 
+    }
 }
 
 impl Deserialize for u16 {
@@ -257,7 +284,7 @@ impl Deserialize for u16 {
         let x2 = buf[1] as u16;
 
         Ok(((x1 << 8) | (x2 & 0xff), 2))
-    } 
+    }
 }
 
 impl Deserialize for i16 {
@@ -270,7 +297,37 @@ impl Deserialize for i16 {
         let x2 = buf[1] as i16;
 
         Ok(((x1 << 8) | (x2 & 0xff), 2))
-    } 
+    }
 }
 
-// TODO u32 i32 u64 i64
+impl Deserialize for u32 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 4 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        let x1 = buf[0] as u32;
+        let x2 = buf[1] as u32;
+        let x3 = buf[2] as u32;
+        let x4 = buf[3] as u32;
+
+        Ok((((x1 << 24) | (x2 << 16) | (x3 << 8) | x4), 4))
+    }
+}
+
+impl Deserialize for i32 {
+    fn deserialize(buf: &[u8]) -> Result<(Self, usize), DeserializeError> {
+        if buf.len() < 4 {
+            return Err(DeserializeError::Invalid);
+        }
+
+        let x1 = buf[0] as i32;
+        let x2 = buf[1] as i32;
+        let x3 = buf[2] as i32;
+        let x4 = buf[3] as i32;
+
+        Ok((((x1 << 24) | (x2 << 16) | (x3 << 8) | x4), 4))
+    }
+}
+
+// TODO u64 i64

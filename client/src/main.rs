@@ -1,5 +1,7 @@
 use std::{
-    io::{self, stdout, Write, Read, ErrorKind},
+    collections::HashMap,
+    fs::{File, OpenOptions},
+    io::{self, stdout, ErrorKind, Read, Write},
     net::TcpStream,
     process::exit,
     thread,
@@ -9,13 +11,34 @@ use std::{
 use crossterm::{
     cursor::{Hide, MoveTo},
     event::{poll, read, Event, KeyCode, KeyModifiers},
-    style::{PrintStyledContent, Stylize, StyledContent},
+    style::{PrintStyledContent, StyledContent, Stylize},
     terminal::{self, Clear, ClearType},
     QueueableCommand,
 };
-use game_core::{constants::{LOCAL_HOST, PORT}, protocol::{Packet, ServerPacket}, types::{Coords, Block, Map}};
-use logger::{log, log_info, log_error};
-use proto_dryb::Deserialize;
+use game_core::{
+    constants::{LOCAL_HOST, PORT},
+    protocol::{ClientPacket, Packet, ServerPacket, Step},
+    types::{Block, Coords},
+};
+use logger::{log, log_error, log_info};
+use proto_dryb::{Deserialize, Serialize};
+
+macro_rules! print_to_file {
+    ($($arg:tt)*) => {{
+        use std::fs::OpenOptions;
+        use std::io::Write;
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("client_state")
+            .expect("Failed to open file");
+
+        let formatted_string = format!($($arg)*);
+        file.write_all(formatted_string.as_bytes())
+            .expect("Failed to write to file");
+    }};
+}
 
 const _LOGO: &'static str = r#"
 ██████   █████  ██████   ██████   ██████   ██████  ███████ ███████ 
@@ -32,7 +55,8 @@ impl From<BlockWrapper> for StyledContent<char> {
         match value.0 {
             Block::Void => ' '.grey(),
             Block::Grass => 'G'.green(),
-            Block::Player => 'P'.red(),
+            Block::Player => 'P'.blue(),
+            Block::OtherPlayer => 'E'.red(),
             Block::WallHorizontal => '━'.grey(),
             Block::WallVertical => '┃'.grey(),
             Block::WallTopLeft => '┏'.grey(),
@@ -43,12 +67,31 @@ impl From<BlockWrapper> for StyledContent<char> {
     }
 }
 
-#[derive(Default)]
+struct Player {
+    id: u32,
+    coords: Coords,
+}
+
 struct Client {
     stream: Option<TcpStream>,
     coords: Coords,
     visible_map: Vec<(Block, Coords)>,
+    other_players: HashMap<u32, Player>,
+    radius: u8,
     quit: bool,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        Self {
+            radius: 5,
+            stream: Default::default(),
+            coords: Default::default(),
+            other_players: Default::default(),
+            visible_map: Default::default(),
+            quit: Default::default(),
+        }
+    }
 }
 
 impl Client {
@@ -65,6 +108,34 @@ impl Client {
             eprintln!("Already connected to server")
         }
     }
+
+    fn send_move(&mut self, x: char) -> Result<(), ()> {
+        let packet_to_send = Packet::Client(ClientPacket::Move(Step::try_from(x)?));
+
+        let mut buf = [0; 8];
+        if let Ok(n) = packet_to_send.serialize(&mut buf) {
+            if let Some(stream) = self.stream.as_mut() {
+                stream.write(&mut buf[..n]).map_err(|_| ())?;
+            }
+        } else {
+            return Err(());
+        }
+
+        Ok(())
+    }
+
+    fn remove_non_visible(&mut self) {
+        self.visible_map.retain(|(_, (x, y))| {
+            (x - self.coords.0).pow(2) + (y - self.coords.1).pow(2) <= (self.radius as i16).pow(2)
+        });
+    }
+
+    fn update_other_player_coords(&mut self, id: u32, coords: Coords) {
+        self.other_players
+            .entry(id)
+            .and_modify(|p| p.coords = coords)
+            .or_insert(Player { id, coords });
+    }
 }
 
 fn get_padding(a: Coords, b: (u16, u16)) -> Coords {
@@ -77,44 +148,86 @@ fn to_absolute((x, y): Coords, (padding_x, padding_y): Coords) -> Coords {
 
 fn draw_map(
     stdout: &mut io::Stdout,
-    (terminal_width, terminal_height): (u16, u16),
+    (terminal_height, terminal_width): (u16, u16),
     Client {
-        coords: player_map_coords,
+        coords,
         visible_map,
+        other_players,
         ..
-    }: &Client
-    ) {
+    }: &Client,
+) {
     let player_terminal_coords = (terminal_width / 2, terminal_height / 2);
-    let padding = get_padding(*player_map_coords, player_terminal_coords);
+    let padding = get_padding(*coords, player_terminal_coords);
+    print_to_file!(
+        "actual: {:?}, terminal: {:?}, padding: {:?}\n",
+        coords,
+        player_terminal_coords,
+        padding
+    );
 
     // fill terminal with Block::Void
-    for terminal_x in 0..terminal_width {
-        for terminal_y in 0..terminal_height - 2 {
-            stdout.queue(MoveTo(terminal_x, terminal_y)).unwrap();
-            stdout.queue(PrintStyledContent(BlockWrapper(Block::Void).into())).unwrap();
-        }
+    //for terminal_x in 0..terminal_height - 2 {
+    //    for terminal_y in 0..terminal_width {
+    //        stdout.queue(MoveTo(terminal_x, terminal_y)).expect(format!("MoveTo1, x: {}, y: {}", terminal_x, terminal_y).as_str());
+    //        stdout.queue(PrintStyledContent(BlockWrapper(Block::Void).into())).expect("PrintStyledContent1");
+    //    }
+    //}
+
+    print_to_file!("visible_map: ");
+    for (_, (x, y)) in visible_map {
+        print_to_file!("({}: {}), ", x, y);
     }
+    print_to_file!("\n");
 
     // print visible_map
     for (b, (x, y)) in visible_map
         .iter()
-            .map(|&vc| (vc.0, to_absolute(vc.1, padding)))
-            .collect::<Vec<_>>()
-            {
-                stdout.queue(MoveTo(x as u16, y as u16)).unwrap();
-                stdout.queue(PrintStyledContent(BlockWrapper(b).into())).unwrap();
-            }
+        .map(|&vc| (vc.0, to_absolute(vc.1, padding)))
+        .collect::<Vec<_>>()
+    {
+        stdout
+            .queue(MoveTo(y as u16, x as u16))
+            .expect(format!("MoveTo2, x: {}, y: {}", x, y).as_str());
+        stdout
+            .queue(PrintStyledContent(BlockWrapper(b).into()))
+            .expect("PrintStyledContent2");
+    }
+
+    // print other_players
+    for (x, y) in other_players
+        .values()
+        .map(|p| to_absolute(p.coords, padding))
+    {
+        stdout
+            .queue(MoveTo(y as u16, x as u16))
+            .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
+        stdout
+            .queue(PrintStyledContent(BlockWrapper(Block::OtherPlayer).into()))
+            .expect("PrintStyledContent3");
+    }
 
     // print player
-    stdout.queue(MoveTo(player_terminal_coords.0, player_terminal_coords.1)).unwrap();
-    stdout.queue(PrintStyledContent(BlockWrapper(Block::Player).into())).unwrap();
+    stdout
+        .queue(MoveTo(player_terminal_coords.1, player_terminal_coords.0))
+        .expect(
+            format!(
+                "MoveTo4, x: {}, y: {}",
+                player_terminal_coords.0, player_terminal_coords.1
+            )
+            .as_str(),
+        );
+    stdout
+        .queue(PrintStyledContent(BlockWrapper(Block::Player).into()))
+        .expect("PrintStyledContent4");
 }
 
 fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) {
-    stdout.queue(MoveTo(0, x)).unwrap();
+    stdout
+        .queue(MoveTo(0, x))
+        .expect(format!("MoveTo5, x: {}, y: {}", 0, x).as_str());
     stdout
         .queue(PrintStyledContent("=".repeat(w).green()))
-        .unwrap();
+        .expect("PrintStyledContent5");
 }
 
 fn main() {
@@ -131,14 +244,38 @@ fn main() {
 
     while !client.quit {
         loop {
-            while poll(Duration::ZERO).unwrap() {
-                match read().unwrap() {
+            while poll(Duration::ZERO).expect("poll error") {
+                match read().expect("read error") {
                     Event::Resize(w, h) => terminal_dimensions = (w, h),
                     Event::Key(event) => {
                         if let KeyCode::Char(c) = event.code {
                             if c == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
                                 terminal::disable_raw_mode().unwrap();
                                 exit(0);
+                            }
+
+                            match c {
+                                'w' | 'k' => {
+                                    client
+                                        .send_move(c)
+                                        .expect(format!("send_move: {}", c).as_str());
+                                }
+                                'a' | 'h' => {
+                                    client
+                                        .send_move(c)
+                                        .expect(format!("send_move: {}", c).as_str());
+                                }
+                                's' | 'j' => {
+                                    client
+                                        .send_move(c)
+                                        .expect(format!("send_move: {}", c).as_str());
+                                }
+                                'd' | 'l' => {
+                                    client
+                                        .send_move(c)
+                                        .expect(format!("send_move: {}", c).as_str());
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -153,41 +290,59 @@ fn main() {
                         log_info!("Server closed the connection");
                         terminal::disable_raw_mode().unwrap();
                         exit(0);
-                    },
+                    }
                     Ok(n) => {
-                        if let Ok((packet, size)) = Packet::deserialize(&buf[..n]) {
+                        if let Ok((packet, _)) = Packet::deserialize(&buf[..n]) {
                             match packet {
                                 Packet::Server(s) => {
                                     match s {
                                         ServerPacket::NewClientCoordsVisibleMap(nc) => {
                                             client.coords = nc.coords;
                                             client.visible_map = nc.map;
+
+                                            stdout.queue(Clear(ClearType::All)).unwrap();
+                                            draw_map(&mut stdout, terminal_dimensions, &client);
+                                        }
+                                        ServerPacket::NewCoords(mut nc) => {
+                                            client.coords = nc.center;
+                                            client.remove_non_visible();
+                                            client.visible_map.append(&mut nc.coords);
+                                            //client.visible_map = nc.coords;
+
+                                            stdout.queue(Clear(ClearType::All)).unwrap();
+                                            draw_map(&mut stdout, terminal_dimensions, &client);
+                                        }
+                                        ServerPacket::OtherPlayerMoved(opm) => {
+                                            stdout.queue(Clear(ClearType::All)).unwrap();
+
+                                            draw_map(&mut stdout, terminal_dimensions, &client);
+                                            client.update_other_player_coords(opm.id, opm.coords);
                                         }
                                     }
                                 }
+                                _ => panic!("Server cannot send client packets"),
                             }
                         } else {
                             log_error!("Failed to deserialize server message");
                         }
-                    },
+                    }
                     Err(err) => {
                         if err.kind() != ErrorKind::WouldBlock {
                             client.stream = None;
                             log_error!("Connection error: {}", err);
                             exit(0);
                         }
-                    },
+                    }
                 }
             }
 
-            draw_map(&mut stdout, terminal_dimensions, &client);
-            draw_line(
-                &mut stdout,
-                terminal_dimensions.1 - 2,
-                terminal_dimensions.0 as usize,
-            );
+            //draw_line(
+            //    &mut stdout,
+            //    terminal_dimensions.1 - 2,
+            //    terminal_dimensions.0 as usize,
+            //);
 
-            stdout.flush().unwrap();
+            stdout.flush().expect("flush");
 
             thread::sleep(Duration::from_millis(33));
         }
