@@ -78,18 +78,20 @@ impl TryFrom<char> for Step {
 
 #[derive(Serialize, Deserialize)]
 pub struct NewClient {
+    pub id: u32,
     pub coords: Coords,
     pub map: Vec<(Block, Coords)>,
 }
 
 pub fn generate_initial_payload(
     buf: &mut [u8],
+    id: u32,
     coords: Coords,
     radius: u8,
     map: &Map,
 ) -> Result<usize, SerializeError> {
     let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(
-        coords, map, radius,
+        id, coords, map, radius,
     )));
 
     packet.serialize(buf)
@@ -128,8 +130,9 @@ pub fn generate_new_coords_payload(
 }
 
 impl NewClient {
-    fn new(coords: Coords, map: &Map, radius: u8) -> Self {
+    fn new(id: u32, coords: Coords, map: &Map, radius: u8) -> Self {
         Self {
+            id,
             coords,
             map: visible_map(map, coords, radius),
         }

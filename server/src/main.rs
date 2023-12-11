@@ -58,13 +58,6 @@ impl Client {
         *id += 1;
         new
     }
-
-    fn sees_coords(&self, (other_x, other_y): (i16, i16)) -> bool {
-        let diff_sqr = (self.coords.0 - other_x).pow(2) + (self.coords.1 - other_y).pow(2);
-        let radius_sqr = (self.radius as i16).pow(2);
-        log_info!("diff_sqr: {}, radius_sqr: {}", diff_sqr, radius_sqr);
-        diff_sqr <= radius_sqr
-    }
 }
 
 struct Server {
@@ -93,9 +86,14 @@ impl Server {
             &mut self.id_counter,
         );
 
-        if let Ok(n) =
-            protocol::generate_initial_payload(buf, client.coords, client.radius, &self.map)
-        {
+        if let Ok(n) = protocol::generate_initial_payload(
+            buf,
+            client.id,
+            client.coords,
+            client.radius,
+            &self.map,
+        ) {
+            self.id_counter += 1;
             if let Err(err) = client.conn.deref().write(&buf[..n]) {
                 log_error!("Could not write to client: {addr}, {err}");
                 return;
@@ -130,6 +128,10 @@ impl Server {
                                         client.coords,
                                         step,
                                         client.radius,
+                                        //self.clients.iter()
+                                        //.filter(|(_, c)| c.borrow().id != client.id)
+                                        //.map(|(_, c)| c.borrow().coords)
+                                        //.collect(),
                                     )
                                 {
                                     let prev_player_coords = client.coords;
@@ -139,7 +141,12 @@ impl Server {
                                         .clients
                                         .iter()
                                         .filter(|(&a, c)| {
-                                            a != addr && client.sees_coords(c.borrow().coords)
+                                            a != addr
+                                                && utils::is_inside_circle(
+                                                    client.coords,
+                                                    client.radius,
+                                                    c.borrow().coords,
+                                                )
                                         })
                                         .map(|(_, c)| (c.borrow().id, c.borrow().coords))
                                         .collect();
@@ -164,7 +171,12 @@ impl Server {
                                     // send to other players new coords of this if in radius
                                     for (&other_addr, other_client) in
                                         self.clients.iter().filter(|(&a, c)| {
-                                            a != addr && c.borrow().sees_coords(new_player_coord)
+                                            a != addr
+                                                && utils::is_inside_circle(
+                                                    c.borrow().coords,
+                                                    c.borrow().radius,
+                                                    new_player_coord,
+                                                )
                                         })
                                     {
                                         log_info!(
@@ -193,14 +205,22 @@ impl Server {
                                     for (&other_addr, other_client) in
                                         self.clients.iter().filter(|(&a, c)| {
                                             a != addr
-                                                && c.borrow().sees_coords(prev_player_coords)
-                                                && !c.borrow().sees_coords(new_player_coord)
+                                                && utils::is_inside_circle(
+                                                    c.borrow().coords,
+                                                    c.borrow().radius,
+                                                    prev_player_coords,
+                                                )
+                                                && !utils::is_inside_circle(
+                                                    c.borrow().coords,
+                                                    c.borrow().radius,
+                                                    new_player_coord,
+                                                )
                                         })
                                     {
                                         log_info!(
-                                            "Sending move outside radius notification to player with id: {}",
-                                            client_id
-                                        );
+                                                "Sending move outside radius notification to player with id: {}",
+                                                client_id
+                                                );
                                         if let Ok(n) =
                                             protocol::generate_move_outside_radius_notify_payload(
                                                 buf, client_id,

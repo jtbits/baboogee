@@ -19,6 +19,7 @@ use game_core::{
     constants::{LOCAL_HOST, PORT},
     protocol::{ClientPacket, Packet, ServerPacket, Step},
     types::{Block, Coords},
+    utils,
 };
 use logger::{log, log_error, log_info};
 use proto_dryb::{Deserialize, Serialize};
@@ -67,32 +68,18 @@ impl From<BlockWrapper> for StyledContent<char> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum PlayerState {
-    InsideRadius,
-    OutsideRadius,
-}
-
-impl From<PlayerState> for StyledContent<char> {
-    fn from(value: PlayerState) -> Self {
-        match value {
-            PlayerState::InsideRadius => 'E'.red(),
-            PlayerState::OutsideRadius => '?'.yellow(),
-        }
-    }
-}
-
 struct Player {
     id: u32,
     coords: Coords,
-    state: PlayerState,
 }
 
 struct Client {
+    id: u32,
     stream: Option<TcpStream>,
     coords: Coords,
     visible_map: Vec<(Block, Coords)>,
     other_players: HashMap<u32, Player>,
+    players_outside: HashMap<u32, Player>,
     radius: u8,
     quit: bool,
 }
@@ -101,9 +88,11 @@ impl Default for Client {
     fn default() -> Self {
         Self {
             radius: 5,
+            id: Default::default(),
             stream: Default::default(),
             coords: Default::default(),
             other_players: Default::default(),
+            players_outside: Default::default(),
             visible_map: Default::default(),
             quit: Default::default(),
         }
@@ -147,23 +136,6 @@ impl Client {
     }
 
     fn update_other_player_coords_after_move(&mut self, players: &Vec<(u32, Coords)>) {
-        self.update_other_player_coords_after_he_moves(players);
-
-        for (&id, p) in self.other_players.iter_mut() {
-            p.state = if players.iter().any(|p| p.0 == id) {
-                PlayerState::InsideRadius
-            } else {
-                PlayerState::OutsideRadius
-            }
-        }
-
-        self.other_players.retain(|_, p| {
-            !(inside_radius(self.coords, self.radius as i16, p.coords)
-                && p.state == PlayerState::OutsideRadius)
-        });
-    }
-
-    fn update_other_player_coords_after_he_moves(&mut self, players: &Vec<(u32, Coords)>) {
         for (id, coords) in players.iter() {
             self.other_players
                 .entry(*id)
@@ -171,20 +143,37 @@ impl Client {
                 .or_insert(Player {
                     id: *id,
                     coords: *coords,
-                    state: PlayerState::InsideRadius,
                 });
+
+            self.players_outside.remove(id);
         }
+
+        self.players_outside.retain(|_, p| !utils::is_inside_circle(self.coords, self.radius, p.coords));
+
+        let player_to_remove = self.other_players.iter()
+            .filter(|(_, p)| !utils::is_inside_circle(self.coords, self.radius, p.coords))
+            .map(|(&id, _)| id)
+            .collect::<Vec<_>>();
+
+        for id in player_to_remove {
+            if let Some(value) = self.other_players.remove(&id) {
+                self.players_outside.insert(id, value);
+            }
+        }
+    }
+
+    fn update_other_player_coords_after_other_player_move(&mut self, id: u32, coords: Coords) {
+        self.players_outside.remove(&id);
+
+        self.other_players
+            .entry(id)
+            .and_modify(|p| p.coords = coords)
+            .or_insert(Player { id, coords });
     }
 
     fn remove_player(&mut self, id: u32) {
         self.other_players.remove(&id);
     }
-}
-
-fn inside_radius((x1, y1): Coords, r: i16, (x2, y2): Coords) -> bool {
-    let diff_sqr = (x1 - x2).pow(2) + (y1 - y2).pow(2);
-    let radius_sqr = r.pow(2);
-    diff_sqr <= radius_sqr
 }
 
 fn get_padding(a: Coords, b: (u16, u16)) -> Coords {
@@ -202,6 +191,7 @@ fn draw_map(
         coords,
         visible_map,
         other_players,
+        players_outside,
         ..
     }: &Client,
 ) {
@@ -213,14 +203,6 @@ fn draw_map(
         player_terminal_coords,
         padding
     );
-
-    // fill terminal with Block::Void
-    //for terminal_x in 0..terminal_height - 2 {
-    //    for terminal_y in 0..terminal_width {
-    //        stdout.queue(MoveTo(terminal_x, terminal_y)).expect(format!("MoveTo1, x: {}, y: {}", terminal_x, terminal_y).as_str());
-    //        stdout.queue(PrintStyledContent(BlockWrapper(Block::Void).into())).expect("PrintStyledContent1");
-    //    }
-    //}
 
     print_to_file!("visible_map: ");
     for (_, (x, y)) in visible_map {
@@ -243,15 +225,28 @@ fn draw_map(
     }
 
     // print other_players
-    for (state, (x, y)) in other_players
+    for (x, y) in other_players
         .values()
-        .map(|p| (p.state, to_absolute(p.coords, padding)))
+        .map(|p| to_absolute(p.coords, padding))
     {
         stdout
             .queue(MoveTo(y as u16, x as u16))
             .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
         stdout
-            .queue(PrintStyledContent(state.into()))
+            .queue(PrintStyledContent('E'.red()))
+            .expect("PrintStyledContent3");
+    }
+
+    // print remove players
+    for (x, y) in players_outside
+        .values()
+        .map(|p| to_absolute(p.coords, padding))
+    {
+        stdout
+            .queue(MoveTo(y as u16, x as u16))
+            .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
+        stdout
+            .queue(PrintStyledContent('?'.yellow()))
             .expect("PrintStyledContent3");
     }
 
@@ -356,6 +351,7 @@ fn main() {
                             match packet {
                                 Packet::Server(s) => match s {
                                     ServerPacket::NewClientCoordsVisibleMap(nc) => {
+                                        client.id = nc.id;
                                         client.coords = nc.coords;
                                         client.visible_map = nc.map;
 
@@ -382,10 +378,9 @@ fn main() {
                                         );
                                     }
                                     ServerPacket::OtherPlayerMoved(opm) => {
-                                        client.update_other_player_coords_after_he_moves(&vec![(
+                                        client.update_other_player_coords_after_other_player_move(
                                             opm.id, opm.coords,
-                                        )]);
-
+                                        );
                                         stdout.queue(Clear(ClearType::All)).unwrap();
                                         draw_map(&mut stdout, terminal_dimensions, &client);
                                         draw_coords(
