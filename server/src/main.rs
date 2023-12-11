@@ -58,6 +58,10 @@ impl Client {
         *id += 1;
         new
     }
+
+    fn write(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        self.conn.deref().write(buf)
+    }
 }
 
 struct Server {
@@ -114,10 +118,24 @@ impl Server {
         self.clients.insert(addr, RefCell::new(client));
     }
 
-    fn client_disconnected(&mut self, addr: SocketAddr) {
+    fn client_disconnected(&mut self, addr: SocketAddr, buf: &mut [u8]) {
         log_info!("Client {addr} disconnected");
 
-        self.clients.remove(&addr);
+        let removed_optional = self.clients.remove(&addr);
+        match removed_optional {
+            Some(removed) => {
+                if let Ok(n) = protocol::generate_player_disconnected(buf, removed.into_inner().id) {
+                    for client_rc in self.clients.values() {
+                        if let Err(err) = client_rc.borrow_mut().write(&mut buf[..n]) {
+                            log_error!("Error writing to client: {err}");
+                        }
+                    }
+                } else {
+                    log_error!("Could not generate player_disconnected");
+                }
+            },
+            None => log_error!("Did not found client in hashmap on disconnect"),
+        }
     }
 
     fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) {
@@ -270,7 +288,7 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
                 ClientEvent::Connect { addr, stream } => {
                     server.client_connected(&mut buf, addr, stream)
                 }
-                ClientEvent::Disconnect { addr } => server.client_disconnected(addr),
+                ClientEvent::Disconnect { addr } => server.client_disconnected(addr, &mut buf),
                 ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes, &mut buf),
                 ClientEvent::Error { addr, err } => eprintln!("Client error: {}, {}", addr, err),
             },

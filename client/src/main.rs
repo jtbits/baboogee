@@ -173,6 +173,7 @@ impl Client {
 
     fn remove_player(&mut self, id: u32) {
         self.other_players.remove(&id);
+        self.players_outside.remove(&id);
     }
 }
 
@@ -405,7 +406,18 @@ fn main() {
                                             terminal_dimensions.0,
                                             client.coords,
                                         );
-                                    }
+                                    },
+                                    ServerPacket::PlayerDisconnected(id) => {
+                                        client.remove_player(id);
+
+                                        stdout.queue(Clear(ClearType::All)).unwrap();
+                                        draw_map(&mut stdout, terminal_dimensions, &client);
+                                        draw_coords(
+                                            &mut stdout,
+                                            terminal_dimensions.0,
+                                            client.coords,
+                                        );
+                                    },
                                 },
                                 _ => panic!("Server cannot send client packets"),
                             }

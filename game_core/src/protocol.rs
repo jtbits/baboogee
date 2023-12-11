@@ -2,7 +2,7 @@ use crate::types::{Block, Coords, Map};
 use proto_dryb::{Deserialize, DeserializeError, Serialize, SerializeError};
 use proto_dryb_derive::{Deserialize, Serialize};
 
-use std::{cmp::{max, min}, collections::HashMap};
+use std::cmp::{max, min};
 
 #[derive(Serialize, Deserialize)]
 pub enum Packet {
@@ -16,6 +16,11 @@ pub enum ServerPacket {
     NewCoords(NewCoords),
     OtherPlayerMoved(OtherPlayerMoved),
     OtherPlayerMovedOutsideRadius(OtherPlayerMovedOutsideRadius),
+    PlayerDisconnected(u32),
+}
+
+pub fn generate_player_disconnected(buf: &mut [u8], id: u32) -> Result<usize, SerializeError> {
+    Packet::Server(ServerPacket::PlayerDisconnected(id)).serialize(buf)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -184,3 +189,4 @@ fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(Block, Coords)> {
 
     res
 }
+
