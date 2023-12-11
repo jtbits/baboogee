@@ -2,7 +2,7 @@ use crate::types::{Block, Coords, Map};
 use proto_dryb::{Deserialize, DeserializeError, Serialize, SerializeError};
 use proto_dryb_derive::{Deserialize, Serialize};
 
-use std::cmp::{max, min};
+use std::{cmp::{max, min}, collections::HashMap};
 
 #[derive(Serialize, Deserialize)]
 pub enum Packet {
@@ -77,10 +77,23 @@ impl TryFrom<char> for Step {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct Player {
+    pub id: u32,
+    pub coords: Coords,
+}
+
+impl Player {
+    pub fn new(id: u32, coords: Coords) -> Self {
+        Self { id, coords }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct NewClient {
     pub id: u32,
     pub coords: Coords,
     pub map: Vec<(Block, Coords)>,
+    pub players: Vec<Player>,
 }
 
 pub fn generate_initial_payload(
@@ -89,9 +102,10 @@ pub fn generate_initial_payload(
     coords: Coords,
     radius: u8,
     map: &Map,
+    players: Vec<Player>
 ) -> Result<usize, SerializeError> {
     let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(
-        id, coords, map, radius,
+        id, coords, map, radius, players
     )));
 
     packet.serialize(buf)
@@ -130,10 +144,11 @@ pub fn generate_new_coords_payload(
 }
 
 impl NewClient {
-    fn new(id: u32, coords: Coords, map: &Map, radius: u8) -> Self {
+    fn new(id: u32, coords: Coords, map: &Map, radius: u8, players: Vec<Player>) -> Self {
         Self {
             id,
             coords,
+            players,
             map: visible_map(map, coords, radius),
         }
     }

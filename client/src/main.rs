@@ -354,6 +354,12 @@ fn main() {
                                         client.id = nc.id;
                                         client.coords = nc.coords;
                                         client.visible_map = nc.map;
+                                        client.other_players = nc.players.into_iter()
+                                            .map(|p| (p.id, Player {
+                                                id: p.id,
+                                                coords: p.coords
+                                            }))
+                                            .collect();
 
                                         stdout.queue(Clear(ClearType::All)).unwrap();
                                         draw_map(&mut stdout, terminal_dimensions, &client);

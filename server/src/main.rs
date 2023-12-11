@@ -14,7 +14,7 @@ use std::{
 
 use game_core::{
     constants,
-    protocol::{self, ClientPacket, Packet},
+    protocol::{self, ClientPacket, Packet, Player},
     types::{Coords, Map},
     utils,
 };
@@ -84,15 +84,23 @@ impl Server {
             self.map.height as i16,
             self.map.width as i16,
             &mut self.id_counter,
-        );
+            );
 
+        let players_inside_radius = self.clients.values()
+            .filter(|c| utils::is_inside_circle(
+                    client.coords,
+                    client.radius,
+                    c.borrow().coords))
+            .map(|c| Player::new(c.borrow().id, c.borrow().coords))
+            .collect::<Vec<_>>();
         if let Ok(n) = protocol::generate_initial_payload(
             buf,
             client.id,
             client.coords,
             client.radius,
             &self.map,
-        ) {
+            players_inside_radius,
+            ) {
             self.id_counter += 1;
             if let Err(err) = client.conn.deref().write(&buf[..n]) {
                 log_error!("Could not write to client: {addr}, {err}");
