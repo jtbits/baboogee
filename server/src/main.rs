@@ -155,16 +155,20 @@ impl Server {
                 match cp {
                     ClientPacket::Move(step) => {
                         log_info!("Got Move client packet with step: {:?}", step);
-                        let (new_player_coord, new_visiple_coord) = utils::try_move_in_map(
+                        let move_optional = utils::try_move_in_map(
                             &self.map,
                             client.borrow().coords,
                             step,
                             client.borrow().radius,
-                            //self.clients.iter()
-                            //.filter(|(_, c)| c.borrow().id != client.id)
-                            //.map(|(_, c)| c.borrow().coords)
-                            //.collect(),
-                        )?;
+                            &self.clients.iter()
+                            .filter(|(&a, _)| a != addr)
+                            .map(|(_, c)| c.borrow().coords)
+                            .collect(),
+                            );
+                        if let Err(_) = move_optional {
+                            return Ok(());
+                        }
+                        let (new_player_coord, new_visiple_coord) = move_optional.unwrap();
                         let prev_player_coords = client.borrow().coords;
                         client.borrow_mut().coords = new_player_coord;
                         let players_inside_radius = self
@@ -176,9 +180,9 @@ impl Server {
                                     new_player_coord,
                                     client.borrow().radius,
                                     c.borrow().coords,
-                                )
+                                    )
                             })
-                            .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
+                        .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
                             .collect();
 
                         // send new coords to player
@@ -187,8 +191,8 @@ impl Server {
                             new_player_coord,
                             new_visiple_coord,
                             players_inside_radius,
-                        )
-                        .map_err(|_| ())?;
+                            )
+                            .map_err(|_| ())?;
                         client
                             .borrow()
                             .conn
@@ -208,19 +212,19 @@ impl Server {
                                     c.borrow().coords,
                                     c.borrow().radius,
                                     new_player_coord,
-                                )
+                                    )
                             });
                         for (&other_addr, other_client) in players_seeing_client {
                             log_info!(
                                 "Sending move notification to player with id: {}",
                                 client.borrow().id
-                            );
+                                );
                             let n = protocol::generate_move_notify_payload(
                                 buf,
                                 new_player_coord,
                                 client.borrow().id,
-                            )
-                            .map_err(|_| ())?;
+                                )
+                                .map_err(|_| ())?;
                             other_client
                                 .borrow()
                                 .conn
@@ -228,8 +232,8 @@ impl Server {
                                 .write(&buf[..n])
                                 .map_err(|err| {
                                     log_error!(
-                                    "Could not notify client {other_addr} about the move: {err}"
-                                )
+                                        "Could not notify client {other_addr} about the move: {err}"
+                                        )
                                 })?;
                         }
 
@@ -243,26 +247,26 @@ impl Server {
                                     c.borrow().coords,
                                     c.borrow().radius,
                                     prev_player_coords,
-                                )
+                                    )
                             })
-                            .filter(|(_, c)| {
-                                !utils::is_inside_circle(
-                                    c.borrow().coords,
-                                    c.borrow().radius,
-                                    new_player_coord,
+                        .filter(|(_, c)| {
+                            !utils::is_inside_circle(
+                                c.borrow().coords,
+                                c.borrow().radius,
+                                new_player_coord,
                                 )
-                            });
+                        });
 
                         for (&other_addr, other_client) in players_lost_client {
                             log_info!(
                                 "Sending move outside radius notification to player with id: {}",
                                 client.borrow().id
-                            );
+                                );
                             let n = protocol::generate_move_outside_radius_notify_payload(
                                 buf,
                                 client.borrow().id,
-                            )
-                            .map_err(|_| ())?;
+                                )
+                                .map_err(|_| ())?;
                             other_client
                                 .borrow()
                                 .conn

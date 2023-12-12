@@ -31,7 +31,7 @@ pub fn try_move_in_map(
     (center_x, center_y): Coords,
     step: Step,
     radius: u8,
-    //player_coords: Vec<Coords>,
+    player_coords: &Vec<Coords>,
 ) -> Result<MoveCoords, ()> {
     let center_x = match step {
         Step::Up => center_x - 1,
@@ -49,9 +49,9 @@ pub fn try_move_in_map(
         return Err(());
     }
 
-    //if player_coords.contains(&(center_x, center_y)) {
-    //    return None;
-    //}
+    if player_coords.iter().any(|&(x, y)| x == center_x && y == center_y) {
+        return Err(());
+    }
 
     let radius_i16 = radius as i16;
 
