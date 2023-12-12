@@ -126,159 +126,157 @@ impl Server {
     fn client_disconnected(&mut self, addr: SocketAddr, buf: &mut [u8]) -> Result<(), ()> {
         log_info!("Client {addr} disconnected");
 
-        if let Some(removed) = self.clients.remove(&addr) {
-            let n = protocol::generate_player_disconnected(buf, removed.into_inner().id)
-                .map_err(|_| log_error!("Could not generate player_disconnected"))?;
-            for client_rc in self.clients.values() {
-                client_rc
-                    .borrow_mut()
-                    .write(&mut buf[..n])
-                    .inspect_err(|err| log_error!("Error writing to client: {err}"));
-            }
-        } else {
-            log_error!("Did not found client in hashmap on disconnect");
+        let removed = self
+            .clients
+            .remove(&addr)
+            .ok_or(())
+            .map_err(|_| log_error!("Did not found client in hashmap on disconnect"))?;
+
+        let n = protocol::generate_player_disconnected(buf, removed.borrow().id)
+            .map_err(|_| log_error!("Could not generate player_disconnected"))?;
+
+        for c in self.clients.values() {
+            let _ = c
+                .borrow_mut()
+                .write(&mut buf[..n])
+                .inspect_err(|err| log_error!("Error writing to client: {err}"));
         }
 
         Ok(())
     }
 
-    fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) {
-        if let Some(client) = self.clients.get(&addr) {
-            let mut client = client.borrow_mut();
-            if let Ok((packet, _)) = Packet::deserialize(bytes) {
-                match packet {
-                    Packet::Client(pc) => {
-                        match pc {
-                            ClientPacket::Move(step) => {
-                                log_info!("Got Move client packet with step: {:?}", step);
-                                // check if can (returns option of new coord)
-                                if let Some((new_player_coord, new_visiple_coord)) =
-                                    utils::try_move_in_map(
-                                        &self.map,
-                                        client.coords,
-                                        step,
-                                        client.radius,
-                                        //self.clients.iter()
-                                        //.filter(|(_, c)| c.borrow().id != client.id)
-                                        //.map(|(_, c)| c.borrow().coords)
-                                        //.collect(),
-                                    )
-                                {
-                                    let prev_player_coords = client.coords;
-                                    client.coords = new_player_coord;
-                                    let client_id = client.id;
-                                    let visible_players = self
-                                        .clients
-                                        .iter()
-                                        .filter(|(&a, c)| {
-                                            a != addr
-                                                && utils::is_inside_circle(
-                                                    client.coords,
-                                                    client.radius,
-                                                    c.borrow().coords,
-                                                )
-                                        })
-                                        .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
-                                        .collect();
-                                    // send new coords to player
-                                    if let Ok(n) = protocol::generate_new_coords_payload(
-                                        buf,
-                                        new_player_coord,
-                                        new_visiple_coord,
-                                        visible_players,
-                                    ) {
-                                        if let Err(err) = client.conn.deref().write(&buf[..n]) {
-                                            log_error!("Could not write to client: {addr}, {err}");
-                                            return;
-                                        }
-                                    } else {
-                                        log_error!(
-                                            "Could not generate payload: NewCoords after move"
-                                        );
-                                        return;
-                                    }
+    fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) -> Result<(), ()> {
+        let client = self.clients.get(&addr).ok_or(()).map_err(|_| ())?;
+        let (packet, _) = Packet::deserialize(bytes)
+            .map_err(|_| log_error!("Could not deserialize packet from client"))?;
 
-                                    // send to other players new coords of this if in radius
-                                    for (&other_addr, other_client) in
-                                        self.clients.iter().filter(|(&a, c)| {
-                                            a != addr
-                                                && utils::is_inside_circle(
-                                                    c.borrow().coords,
-                                                    c.borrow().radius,
-                                                    new_player_coord,
-                                                )
-                                        })
-                                    {
-                                        log_info!(
-                                            "Sending move notification to player with id: {}",
-                                            client_id
-                                        );
-                                        if let Ok(n) = protocol::generate_move_notify_payload(
-                                            buf,
-                                            new_player_coord,
-                                            client_id,
-                                        ) {
-                                            if let Err(err) = other_client
-                                                .borrow_mut()
-                                                .conn
-                                                .deref()
-                                                .write(&buf[..n])
-                                            {
-                                                log_error!("Could not notify client {other_addr} about the move: {err}");
-                                            }
-                                        } else {
-                                            log_error!("Could not generate payload: OtherPlayerMoved after move")
-                                        }
-                                    }
+        match packet {
+            Packet::Client(cp) => {
+                match cp {
+                    ClientPacket::Move(step) => {
+                        log_info!("Got Move client packet with step: {:?}", step);
+                        let (new_player_coord, new_visiple_coord) = utils::try_move_in_map(
+                            &self.map,
+                            client.borrow().coords,
+                            step,
+                            client.borrow().radius,
+                            //self.clients.iter()
+                            //.filter(|(_, c)| c.borrow().id != client.id)
+                            //.map(|(_, c)| c.borrow().coords)
+                            //.collect(),
+                        )?;
+                        let prev_player_coords = client.borrow().coords;
+                        client.borrow_mut().coords = new_player_coord;
+                        let players_inside_radius = self
+                            .clients
+                            .iter()
+                            .filter(|(&a, _)| a != addr)
+                            .filter(|(_, &ref c)| {
+                                utils::is_inside_circle(
+                                    new_player_coord,
+                                    client.borrow().radius,
+                                    c.borrow().coords,
+                                )
+                            })
+                            .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
+                            .collect();
 
-                                    // sent to other players if player moved outside from their radius
-                                    for (&other_addr, other_client) in
-                                        self.clients.iter().filter(|(&a, c)| {
-                                            a != addr
-                                                && utils::is_inside_circle(
-                                                    c.borrow().coords,
-                                                    c.borrow().radius,
-                                                    prev_player_coords,
-                                                )
-                                                && !utils::is_inside_circle(
-                                                    c.borrow().coords,
-                                                    c.borrow().radius,
-                                                    new_player_coord,
-                                                )
-                                        })
-                                    {
-                                        log_info!(
-                                                "Sending move outside radius notification to player with id: {}",
-                                                client_id
-                                                );
-                                        if let Ok(n) =
-                                            protocol::generate_move_outside_radius_notify_payload(
-                                                buf, client_id,
-                                            )
-                                        {
-                                            if let Err(err) = other_client
-                                                .borrow_mut()
-                                                .conn
-                                                .deref()
-                                                .write(&buf[..n])
-                                            {
-                                                log_error!("Could not notify client {other_addr} about the move outside radius: {err}");
-                                            }
-                                        } else {
-                                            log_error!("Could not generate payload: OtherPlayerMovedOutsideRadius after move")
-                                        }
-                                    }
-                                } else {
-                                    log_info!("player cannot move");
-                                    // TODO send CannotMove
-                                }
-                            }
+                        // send new coords to player
+                        let n = protocol::generate_new_coords_payload(
+                            buf,
+                            new_player_coord,
+                            new_visiple_coord,
+                            players_inside_radius,
+                        )
+                        .map_err(|_| ())?;
+                        client
+                            .borrow()
+                            .conn
+                            .deref()
+                            .write(&buf[..n])
+                            .map_err(|err| {
+                                log_error!("Could not write to client: {addr}, {err}")
+                            })?;
+
+                        // send to other players new coords of this if in radius
+                        let players_seeing_client = self
+                            .clients
+                            .iter()
+                            .filter(|(&a, _)| a != addr)
+                            .filter(|(_, c)| {
+                                utils::is_inside_circle(
+                                    c.borrow().coords,
+                                    c.borrow().radius,
+                                    new_player_coord,
+                                )
+                            });
+                        for (&other_addr, other_client) in players_seeing_client {
+                            log_info!(
+                                "Sending move notification to player with id: {}",
+                                client.borrow().id
+                            );
+                            let n = protocol::generate_move_notify_payload(
+                                buf,
+                                new_player_coord,
+                                client.borrow().id,
+                            )
+                            .map_err(|_| ())?;
+                            other_client
+                                .borrow()
+                                .conn
+                                .deref()
+                                .write(&buf[..n])
+                                .map_err(|err| {
+                                    log_error!(
+                                    "Could not notify client {other_addr} about the move: {err}"
+                                )
+                                })?;
+                        }
+
+                        // sent to other players if player moved outside from their radius
+                        let players_lost_client = self
+                            .clients
+                            .iter()
+                            .filter(|(&a, _)| a != addr)
+                            .filter(|(_, c)| {
+                                utils::is_inside_circle(
+                                    c.borrow().coords,
+                                    c.borrow().radius,
+                                    prev_player_coords,
+                                )
+                            })
+                            .filter(|(_, c)| {
+                                !utils::is_inside_circle(
+                                    c.borrow().coords,
+                                    c.borrow().radius,
+                                    new_player_coord,
+                                )
+                            });
+
+                        for (&other_addr, other_client) in players_lost_client {
+                            log_info!(
+                                "Sending move outside radius notification to player with id: {}",
+                                client.borrow().id
+                            );
+                            let n = protocol::generate_move_outside_radius_notify_payload(
+                                buf,
+                                client.borrow().id,
+                            )
+                            .map_err(|_| ())?;
+                            other_client
+                                .borrow()
+                                .conn
+                                .deref()
+                                .write(&buf[..n])
+                                .map_err(|err| log_error!("Could not notify client {other_addr} about the move outside radius: {err}"))?;
                         }
                     }
-                    _ => {}
                 }
             }
+            _ => return Err(()),
         }
+
+        Ok(())
     }
 }
 
@@ -293,7 +291,7 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
                     server.client_connected(&mut buf, addr, stream)?
                 }
                 ClientEvent::Disconnect { addr } => server.client_disconnected(addr, &mut buf)?,
-                ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes, &mut buf),
+                ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes, &mut buf)?,
                 ClientEvent::Error { addr, err } => log_error!("Client error: {}, {}", addr, err),
             },
             Err(RecvTimeoutError::Timeout) => {}

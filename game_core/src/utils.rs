@@ -32,7 +32,7 @@ pub fn try_move_in_map(
     step: Step,
     radius: u8,
     //player_coords: Vec<Coords>,
-) -> Option<MoveCoords> {
+) -> Result<MoveCoords, ()> {
     let center_x = match step {
         Step::Up => center_x - 1,
         Step::Down => center_x + 1,
@@ -46,7 +46,7 @@ pub fn try_move_in_map(
 
     if center_x < 0 || center_x >= map.height as i16 || center_y < 0 || center_y >= map.width as i16
     {
-        return None;
+        return Err(());
     }
 
     //if player_coords.contains(&(center_x, center_y)) {
@@ -82,7 +82,7 @@ pub fn try_move_in_map(
     }
     println!("new_coords.len: {}", new_coords.len());
 
-    Some(((center_x, center_y), new_coords))
+    Ok(((center_x, center_y), new_coords))
 }
 
 pub fn is_inside_circle(
