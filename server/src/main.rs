@@ -80,7 +80,12 @@ impl Server {
         }
     }
 
-    fn client_connected(&mut self, buf: &mut [u8], addr: SocketAddr, stream: Arc<TcpStream>) {
+    fn client_connected(
+        &mut self,
+        buf: &mut [u8],
+        addr: SocketAddr,
+        stream: Arc<TcpStream>,
+    ) -> Result<(), ()> {
         log_info!("Client {addr} connected");
 
         let client = Client::new_from_conn(
@@ -96,46 +101,45 @@ impl Server {
             .filter(|c| utils::is_inside_circle(client.coords, client.radius, c.borrow().coords))
             .map(|c| Player::new(c.borrow().id, c.borrow().coords))
             .collect::<Vec<_>>();
-        if let Ok(n) = protocol::generate_initial_payload(
+
+        let n = protocol::generate_initial_payload(
             buf,
             client.id,
             client.coords,
             client.radius,
             &self.map,
             players_inside_radius,
-        ) {
-            self.id_counter += 1;
-            if let Err(err) = client.conn.deref().write(&buf[..n]) {
-                log_error!("Could not write to client: {addr}, {err}");
-                return;
-            }
-        } else {
-            log_error!("Could not generate payload");
-            return;
-        }
+        )
+        .map_err(|_| log_error!("Could not generate payload"))?;
 
+        self.id_counter += 1;
+        client
+            .conn
+            .deref()
+            .write(&buf[..n])
+            .map_err(|err| log_error!("Could not write to client: {addr}, {err}"))?;
         self.clients.insert(addr, RefCell::new(client));
+
+        Ok(())
     }
 
-    fn client_disconnected(&mut self, addr: SocketAddr, buf: &mut [u8]) {
+    fn client_disconnected(&mut self, addr: SocketAddr, buf: &mut [u8]) -> Result<(), ()> {
         log_info!("Client {addr} disconnected");
 
-        let removed_optional = self.clients.remove(&addr);
-        match removed_optional {
-            Some(removed) => {
-                if let Ok(n) = protocol::generate_player_disconnected(buf, removed.into_inner().id)
-                {
-                    for client_rc in self.clients.values() {
-                        if let Err(err) = client_rc.borrow_mut().write(&mut buf[..n]) {
-                            log_error!("Error writing to client: {err}");
-                        }
-                    }
-                } else {
-                    log_error!("Could not generate player_disconnected");
-                }
+        if let Some(removed) = self.clients.remove(&addr) {
+            let n = protocol::generate_player_disconnected(buf, removed.into_inner().id)
+                .map_err(|_| log_error!("Could not generate player_disconnected"))?;
+            for client_rc in self.clients.values() {
+                client_rc
+                    .borrow_mut()
+                    .write(&mut buf[..n])
+                    .inspect_err(|err| log_error!("Error writing to client: {err}"));
             }
-            None => log_error!("Did not found client in hashmap on disconnect"),
+        } else {
+            log_error!("Did not found client in hashmap on disconnect");
         }
+
+        Ok(())
     }
 
     fn client_wrote(&mut self, addr: SocketAddr, bytes: &[u8], buf: &mut [u8]) {
@@ -286,11 +290,11 @@ fn server(events: Receiver<ClientEvent>) -> Result<(), ()> {
         match events.recv_timeout(Duration::from_millis(200)) {
             Ok(msg) => match msg {
                 ClientEvent::Connect { addr, stream } => {
-                    server.client_connected(&mut buf, addr, stream)
+                    server.client_connected(&mut buf, addr, stream)?
                 }
-                ClientEvent::Disconnect { addr } => server.client_disconnected(addr, &mut buf),
+                ClientEvent::Disconnect { addr } => server.client_disconnected(addr, &mut buf)?,
                 ClientEvent::Read { addr, bytes } => server.client_wrote(addr, &bytes, &mut buf),
-                ClientEvent::Error { addr, err } => eprintln!("Client error: {}, {}", addr, err),
+                ClientEvent::Error { addr, err } => log_error!("Client error: {}, {}", addr, err),
             },
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
