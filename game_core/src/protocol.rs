@@ -1,4 +1,4 @@
-use crate::types::{Block, Coords, Map};
+use crate::types::{Coords, Map, MapCell};
 use proto_dryb::{Deserialize, DeserializeError, Serialize, SerializeError};
 use proto_dryb_derive::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub enum ServerPacket {
     NewClientCoordsVisibleMap(NewClient),
     NewCoords(NewCoords),
     OtherPlayerMoved(OtherPlayerMoved),
-    OtherPlayerMovedOutsideRadius(OtherPlayerMovedOutsideRadius),
+    OtherPlayerMovedOutsideRadius(u32),
     PlayerDisconnected(u32),
 }
 
@@ -32,8 +32,7 @@ pub fn generate_move_outside_radius_notify_payload(
     buf: &mut [u8],
     id: u32,
 ) -> Result<usize, SerializeError> {
-    let opmor = OtherPlayerMovedOutsideRadius { id };
-    let packet = Packet::Server(ServerPacket::OtherPlayerMovedOutsideRadius(opmor));
+    let packet = Packet::Server(ServerPacket::OtherPlayerMovedOutsideRadius(id));
 
     packet.serialize(buf)
 }
@@ -97,7 +96,7 @@ impl Player {
 pub struct NewClient {
     pub id: u32,
     pub coords: Coords,
-    pub map: Vec<(Block, Coords)>,
+    pub map: Vec<MapCell>,
     pub players: Vec<Player>,
 }
 
@@ -107,10 +106,10 @@ pub fn generate_initial_payload(
     coords: Coords,
     radius: u8,
     map: &Map,
-    players: Vec<Player>
+    players: Vec<Player>,
 ) -> Result<usize, SerializeError> {
     let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(
-        id, coords, map, radius, players
+        id, coords, map, radius, players,
     )));
 
     packet.serialize(buf)
@@ -119,12 +118,12 @@ pub fn generate_initial_payload(
 #[derive(Serialize, Deserialize)]
 pub struct NewCoords {
     pub center: Coords,
-    pub coords: Vec<(Block, Coords)>,
-    pub players: Vec<(u32, Coords)>,
+    pub coords: Vec<MapCell>,
+    pub players: Vec<Player>,
 }
 
 impl NewCoords {
-    fn new(center: (i16, i16), coords: Vec<(Block, Coords)>, players: Vec<(u32, Coords)>) -> Self {
+    fn new(center: (i16, i16), coords: Vec<MapCell>, players: Vec<Player>) -> Self {
         Self {
             center,
             coords,
@@ -136,8 +135,8 @@ impl NewCoords {
 pub fn generate_new_coords_payload(
     buf: &mut [u8],
     new_player_coord: Coords,
-    new_visiple_coord: Vec<(Block, Coords)>,
-    visible_players: Vec<(u32, Coords)>,
+    new_visiple_coord: Vec<MapCell>,
+    visible_players: Vec<Player>,
 ) -> Result<usize, SerializeError> {
     let packet = Packet::Server(ServerPacket::NewCoords(NewCoords::new(
         new_player_coord,
@@ -159,7 +158,7 @@ impl NewClient {
     }
 }
 
-fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(Block, Coords)> {
+fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<MapCell> {
     let radius_square = radius as i16 * radius as i16;
 
     let top_left = (
@@ -182,11 +181,13 @@ fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<(Block, Coords)> {
 
             // draw circle
             if x.pow(2) + y.pow(2) <= radius_square {
-                res.push((map.coords[i as usize][j as usize], (i, j)));
+                res.push(MapCell {
+                    block: map.coords[i as usize][j as usize],
+                    coords: (i, j),
+                });
             }
         }
     }
 
     res
 }
-

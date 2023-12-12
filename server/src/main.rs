@@ -88,13 +88,12 @@ impl Server {
             self.map.height as i16,
             self.map.width as i16,
             &mut self.id_counter,
-            );
+        );
 
-        let players_inside_radius = self.clients.values()
-            .filter(|c| utils::is_inside_circle(
-                    client.coords,
-                    client.radius,
-                    c.borrow().coords))
+        let players_inside_radius = self
+            .clients
+            .values()
+            .filter(|c| utils::is_inside_circle(client.coords, client.radius, c.borrow().coords))
             .map(|c| Player::new(c.borrow().id, c.borrow().coords))
             .collect::<Vec<_>>();
         if let Ok(n) = protocol::generate_initial_payload(
@@ -104,7 +103,7 @@ impl Server {
             client.radius,
             &self.map,
             players_inside_radius,
-            ) {
+        ) {
             self.id_counter += 1;
             if let Err(err) = client.conn.deref().write(&buf[..n]) {
                 log_error!("Could not write to client: {addr}, {err}");
@@ -124,7 +123,8 @@ impl Server {
         let removed_optional = self.clients.remove(&addr);
         match removed_optional {
             Some(removed) => {
-                if let Ok(n) = protocol::generate_player_disconnected(buf, removed.into_inner().id) {
+                if let Ok(n) = protocol::generate_player_disconnected(buf, removed.into_inner().id)
+                {
                     for client_rc in self.clients.values() {
                         if let Err(err) = client_rc.borrow_mut().write(&mut buf[..n]) {
                             log_error!("Error writing to client: {err}");
@@ -133,7 +133,7 @@ impl Server {
                 } else {
                     log_error!("Could not generate player_disconnected");
                 }
-            },
+            }
             None => log_error!("Did not found client in hashmap on disconnect"),
         }
     }
@@ -174,7 +174,7 @@ impl Server {
                                                     c.borrow().coords,
                                                 )
                                         })
-                                        .map(|(_, c)| (c.borrow().id, c.borrow().coords))
+                                        .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
                                         .collect();
                                     // send new coords to player
                                     if let Ok(n) = protocol::generate_new_coords_payload(

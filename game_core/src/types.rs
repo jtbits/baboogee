@@ -3,7 +3,19 @@ use proto_dryb_derive::{Deserialize, Serialize};
 
 pub type Coords = (i16, i16);
 
-pub type MoveCoords = (Coords, Vec<(Block, Coords)>);
+#[derive(Serialize, Deserialize)]
+pub struct MapCell {
+    pub block: Block,
+    pub coords: Coords,
+}
+
+impl MapCell {
+    pub fn new(block: Block, coords: Coords) -> Self {
+        Self { block, coords }
+    }
+}
+
+pub type MoveCoords = (Coords, Vec<MapCell>);
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub enum Block {

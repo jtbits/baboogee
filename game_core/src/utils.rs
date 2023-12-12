@@ -4,7 +4,7 @@ use rand::{thread_rng, Rng};
 
 use crate::{
     protocol::Step,
-    types::{Block, Coords, Map, MoveCoords},
+    types::{Block, Coords, Map, MapCell, MoveCoords},
 };
 
 pub fn generate_random_coords(max_x: i16, max_y: i16) -> Coords {
@@ -76,7 +76,7 @@ pub fn try_move_in_map(
         for j in top_left.1..bottom_right.1 {
             // draw circle
             if predicate(center_x - i, center_y - j, radius_i16) {
-                new_coords.push((map.coords[i as usize][j as usize], (i, j)));
+                new_coords.push(MapCell::new(map.coords[i as usize][j as usize], (i, j)));
             }
         }
     }

@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
     io::{self, stdout, ErrorKind, Read, Write},
     net::TcpStream,
     process::exit,
@@ -17,17 +16,17 @@ use crossterm::{
 };
 use game_core::{
     constants::{LOCAL_HOST, PORT},
-    protocol::{ClientPacket, Packet, ServerPacket, Step},
-    types::{Block, Coords},
+    protocol::{self, ClientPacket, OtherPlayerMoved, Packet, ServerPacket, Step},
+    types::{Block, Coords, MapCell},
     utils,
 };
 use logger::{log, log_error, log_info};
 use proto_dryb::{Deserialize, Serialize};
 
+#[warn(unused_macros)]
 macro_rules! print_to_file {
     ($($arg:tt)*) => {{
         use std::fs::OpenOptions;
-        use std::io::Write;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -69,7 +68,6 @@ impl From<BlockWrapper> for StyledContent<char> {
 }
 
 struct Player {
-    id: u32,
     coords: Coords,
 }
 
@@ -77,7 +75,7 @@ struct Client {
     id: u32,
     stream: Option<TcpStream>,
     coords: Coords,
-    visible_map: Vec<(Block, Coords)>,
+    visible_map: Vec<MapCell>,
     other_players: HashMap<u32, Player>,
     players_outside: HashMap<u32, Player>,
     radius: u8,
@@ -114,43 +112,39 @@ impl Client {
         }
     }
 
-    fn send_move(&mut self, x: char) -> Result<(), ()> {
+    fn send_move(&mut self, buf: &mut [u8], x: char) -> Result<(), ()> {
         let packet_to_send = Packet::Client(ClientPacket::Move(Step::try_from(x)?));
 
-        let mut buf = [0; 8];
-        if let Ok(n) = packet_to_send.serialize(&mut buf) {
-            if let Some(stream) = self.stream.as_mut() {
-                stream.write(&mut buf[..n]).map_err(|_| ())?;
-            }
-        } else {
-            return Err(());
+        let n = packet_to_send.serialize(buf).map_err(|_| ())?;
+        if let Some(stream) = self.stream.as_mut() {
+            stream.write(&mut buf[..n]).map_err(|_| ())?;
         }
 
         Ok(())
     }
 
     fn remove_non_visible(&mut self) {
-        self.visible_map.retain(|(_, (x, y))| {
+        self.visible_map.retain(|MapCell { coords: (x, y), .. }| {
             (x - self.coords.0).pow(2) + (y - self.coords.1).pow(2) <= (self.radius as i16).pow(2)
         });
     }
 
-    fn update_other_player_coords_after_move(&mut self, players: &Vec<(u32, Coords)>) {
-        for (id, coords) in players.iter() {
+    fn update_other_player_coords_after_move(&mut self, players: &Vec<protocol::Player>) {
+        for &protocol::Player { id, coords } in players.iter() {
             self.other_players
-                .entry(*id)
-                .and_modify(|p| p.coords = *coords)
-                .or_insert(Player {
-                    id: *id,
-                    coords: *coords,
-                });
+                .entry(id)
+                .and_modify(|p| p.coords = coords)
+                .or_insert(Player { coords });
 
-            self.players_outside.remove(id);
+            self.players_outside.remove(&id);
         }
 
-        self.players_outside.retain(|_, p| !utils::is_inside_circle(self.coords, self.radius, p.coords));
+        self.players_outside
+            .retain(|_, p| !utils::is_inside_circle(self.coords, self.radius, p.coords));
 
-        let player_to_remove = self.other_players.iter()
+        let player_to_remove = self
+            .other_players
+            .iter()
             .filter(|(_, p)| !utils::is_inside_circle(self.coords, self.radius, p.coords))
             .map(|(&id, _)| id)
             .collect::<Vec<_>>();
@@ -168,7 +162,7 @@ impl Client {
         self.other_players
             .entry(id)
             .and_modify(|p| p.coords = coords)
-            .or_insert(Player { id, coords });
+            .or_insert(Player { coords });
     }
 
     fn remove_player(&mut self, id: u32) {
@@ -195,34 +189,17 @@ fn draw_map(
         players_outside,
         ..
     }: &Client,
-) {
+) -> io::Result<()> {
     let player_terminal_coords = (terminal_width / 2, terminal_height / 2);
     let padding = get_padding(*coords, player_terminal_coords);
-    print_to_file!(
-        "actual: {:?}, terminal: {:?}, padding: {:?}\n",
-        coords,
-        player_terminal_coords,
-        padding
-    );
-
-    print_to_file!("visible_map: ");
-    for (_, (x, y)) in visible_map {
-        print_to_file!("({}: {}), ", x, y);
-    }
-    print_to_file!("\n");
 
     // print visible_map
-    for (b, (x, y)) in visible_map
+    for (block, (x, y)) in visible_map
         .iter()
-        .map(|&vc| (vc.0, to_absolute(vc.1, padding)))
-        .collect::<Vec<_>>()
+        .map(|&MapCell { block, coords }| (block, to_absolute(coords, padding)))
     {
-        stdout
-            .queue(MoveTo(y as u16, x as u16))
-            .expect(format!("MoveTo2, x: {}, y: {}", x, y).as_str());
-        stdout
-            .queue(PrintStyledContent(BlockWrapper(b).into()))
-            .expect("PrintStyledContent2");
+        stdout.queue(MoveTo(y as u16, x as u16))?;
+        stdout.queue(PrintStyledContent(BlockWrapper(block).into()))?;
     }
 
     // print other_players
@@ -230,12 +207,8 @@ fn draw_map(
         .values()
         .map(|p| to_absolute(p.coords, padding))
     {
-        stdout
-            .queue(MoveTo(y as u16, x as u16))
-            .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
-        stdout
-            .queue(PrintStyledContent('E'.red()))
-            .expect("PrintStyledContent3");
+        stdout.queue(MoveTo(y as u16, x as u16))?;
+        stdout.queue(PrintStyledContent('E'.red()))?;
     }
 
     // print remove players
@@ -243,54 +216,55 @@ fn draw_map(
         .values()
         .map(|p| to_absolute(p.coords, padding))
     {
-        stdout
-            .queue(MoveTo(y as u16, x as u16))
-            .expect(format!("MoveTo3, x: {}, y: {}", x, y).as_str());
-        stdout
-            .queue(PrintStyledContent('?'.yellow()))
-            .expect("PrintStyledContent3");
+        stdout.queue(MoveTo(y as u16, x as u16))?;
+        stdout.queue(PrintStyledContent('?'.yellow()))?;
     }
 
     // print player
-    stdout
-        .queue(MoveTo(player_terminal_coords.1, player_terminal_coords.0))
-        .expect(
-            format!(
-                "MoveTo4, x: {}, y: {}",
-                player_terminal_coords.0, player_terminal_coords.1
-            )
-            .as_str(),
-        );
-    stdout
-        .queue(PrintStyledContent(BlockWrapper(Block::Player).into()))
-        .expect("PrintStyledContent4");
+    stdout.queue(MoveTo(player_terminal_coords.1, player_terminal_coords.0))?;
+    stdout.queue(PrintStyledContent(BlockWrapper(Block::Player).into()))?;
+
+    Ok(())
 }
 
-fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) {
-    stdout
-        .queue(MoveTo(0, x))
-        .expect(format!("MoveTo5, x: {}, y: {}", 0, x).as_str());
-    stdout
-        .queue(PrintStyledContent("=".repeat(w).green()))
-        .expect("PrintStyledContent5");
+fn draw_line(stdout: &mut io::Stdout, x: u16, w: usize) -> io::Result<()> {
+    stdout.queue(MoveTo(0, x))?;
+    stdout.queue(PrintStyledContent("=".repeat(w).green()))?;
+
+    Ok(())
 }
 
-fn draw_coords(stdout: &mut io::Stdout, terminal_height: u16, (x, y): Coords) {
-    stdout
-        .queue(MoveTo(0, terminal_height))
-        .expect(format!("MoveTo5, x: {}, y: {}", 0, x).as_str());
-    stdout
-        .queue(PrintStyledContent(format!("({:3}:{:3})", x, y).green()))
-        .expect("PrintStyledContent5");
+fn draw_coords(stdout: &mut io::Stdout, terminal_height: u16, (x, y): Coords) -> io::Result<()> {
+    stdout.queue(MoveTo(0, terminal_height))?;
+    stdout.queue(PrintStyledContent(format!("({:3}:{:3})", x, y).green()))?;
+
+    Ok(())
 }
 
-fn main() {
-    terminal::enable_raw_mode().expect("failed to enable raw mode");
+fn rerender(
+    stdout: &mut io::Stdout,
+    client: &Client,
+    terminal_dimensions: (u16, u16),
+) -> io::Result<()> {
+    stdout.queue(Clear(ClearType::All))?;
+    draw_map(stdout, terminal_dimensions, &client)?;
+    draw_coords(stdout, terminal_dimensions.0, client.coords)?;
+    draw_line(
+        stdout,
+        terminal_dimensions.1 - 2,
+        terminal_dimensions.0 as usize,
+    )?;
+
+    Ok(())
+}
+
+fn main() -> io::Result<()> {
+    terminal::enable_raw_mode()?;
+    let mut terminal_dimensions = terminal::size()?;
+
     let mut stdout = stdout();
-    let mut terminal_dimensions = terminal::size().unwrap();
-
-    stdout.queue(Clear(ClearType::All)).unwrap();
-    stdout.queue(Hide).unwrap();
+    stdout.queue(Clear(ClearType::All))?;
+    stdout.queue(Hide)?;
 
     let mut buf = [0; 512];
     let mut client = Client::default();
@@ -298,152 +272,135 @@ fn main() {
 
     while !client.quit {
         loop {
-            while poll(Duration::ZERO).expect("poll error") {
-                match read().expect("read error") {
-                    Event::Resize(w, h) => terminal_dimensions = (w, h),
-                    Event::Key(event) => {
-                        if let KeyCode::Char(c) = event.code {
-                            if c == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
-                                terminal::disable_raw_mode().unwrap();
-                                stdout.queue(Clear(ClearType::All)).unwrap();
-                                exit(0);
-                            }
-
-                            match c {
-                                'w' | 'k' => {
-                                    client
-                                        .send_move(c)
-                                        .expect(format!("send_move: {}", c).as_str());
-                                }
-                                'a' | 'h' => {
-                                    client
-                                        .send_move(c)
-                                        .expect(format!("send_move: {}", c).as_str());
-                                }
-                                's' | 'j' => {
-                                    client
-                                        .send_move(c)
-                                        .expect(format!("send_move: {}", c).as_str());
-                                }
-                                'd' | 'l' => {
-                                    client
-                                        .send_move(c)
-                                        .expect(format!("send_move: {}", c).as_str());
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            while poll(Duration::ZERO)? {
+                handle_io_read(&mut stdout, &mut client, &mut terminal_dimensions, &mut buf)?;
             }
 
-            if let Some(s) = &mut client.stream {
-                match s.read(&mut buf) {
-                    Ok(0) => {
-                        client.stream = None;
-                        terminal::disable_raw_mode().unwrap();
-                        stdout.queue(Clear(ClearType::All)).unwrap();
-                        log_info!("Server closed the connection");
-                        exit(0);
-                    }
-                    Ok(n) => {
-                        if let Ok((packet, _)) = Packet::deserialize(&buf[..n]) {
-                            match packet {
-                                Packet::Server(s) => match s {
-                                    ServerPacket::NewClientCoordsVisibleMap(nc) => {
-                                        client.id = nc.id;
-                                        client.coords = nc.coords;
-                                        client.visible_map = nc.map;
-                                        client.other_players = nc.players.into_iter()
-                                            .map(|p| (p.id, Player {
-                                                id: p.id,
-                                                coords: p.coords
-                                            }))
-                                            .collect();
-
-                                        stdout.queue(Clear(ClearType::All)).unwrap();
-                                        draw_map(&mut stdout, terminal_dimensions, &client);
-                                        draw_coords(
-                                            &mut stdout,
-                                            terminal_dimensions.0,
-                                            client.coords,
-                                        );
-                                    }
-                                    ServerPacket::NewCoords(mut nc) => {
-                                        client.coords = nc.center;
-                                        client.remove_non_visible();
-                                        client.visible_map.append(&mut nc.coords);
-                                        client.update_other_player_coords_after_move(&nc.players);
-
-                                        stdout.queue(Clear(ClearType::All)).unwrap();
-                                        draw_map(&mut stdout, terminal_dimensions, &client);
-                                        draw_coords(
-                                            &mut stdout,
-                                            terminal_dimensions.0,
-                                            client.coords,
-                                        );
-                                    }
-                                    ServerPacket::OtherPlayerMoved(opm) => {
-                                        client.update_other_player_coords_after_other_player_move(
-                                            opm.id, opm.coords,
-                                        );
-                                        stdout.queue(Clear(ClearType::All)).unwrap();
-                                        draw_map(&mut stdout, terminal_dimensions, &client);
-                                        draw_coords(
-                                            &mut stdout,
-                                            terminal_dimensions.0,
-                                            client.coords,
-                                        );
-                                    }
-                                    ServerPacket::OtherPlayerMovedOutsideRadius(opmor) => {
-                                        client.remove_player(opmor.id);
-
-                                        stdout.queue(Clear(ClearType::All)).unwrap();
-                                        draw_map(&mut stdout, terminal_dimensions, &client);
-                                        draw_coords(
-                                            &mut stdout,
-                                            terminal_dimensions.0,
-                                            client.coords,
-                                        );
-                                    },
-                                    ServerPacket::PlayerDisconnected(id) => {
-                                        client.remove_player(id);
-
-                                        stdout.queue(Clear(ClearType::All)).unwrap();
-                                        draw_map(&mut stdout, terminal_dimensions, &client);
-                                        draw_coords(
-                                            &mut stdout,
-                                            terminal_dimensions.0,
-                                            client.coords,
-                                        );
-                                    },
-                                },
-                                _ => panic!("Server cannot send client packets"),
-                            }
-                        } else {
-                            log_error!("Failed to deserialize server message");
-                        }
-                    }
-                    Err(err) => {
-                        if err.kind() != ErrorKind::WouldBlock {
-                            client.stream = None;
-                            log_error!("Connection error: {}", err);
-                            exit(0);
-                        }
-                    }
-                }
+            if let Some(mut s) = client.stream.take() {
+                handle_tcp_read(
+                    &mut s,
+                    &mut stdout,
+                    &mut client,
+                    terminal_dimensions,
+                    &mut buf,
+                )?;
+                client.stream = Some(s);
             }
 
-            draw_line(
-                &mut stdout,
-                terminal_dimensions.1 - 2,
-                terminal_dimensions.0 as usize,
-            );
-
-            stdout.flush().expect("flush");
+            stdout.flush()?;
 
             thread::sleep(Duration::from_millis(33));
         }
     }
+
+    Ok(())
+}
+
+fn handle_io_read(
+    stdout: &mut io::Stdout,
+    client: &mut Client,
+    terminal_dimensions: &mut (u16, u16),
+    buf: &mut [u8],
+) -> io::Result<()> {
+    match read()? {
+        Event::Resize(w, h) => {
+            terminal_dimensions.0 = w;
+            terminal_dimensions.1 = h;
+        }
+        Event::Key(event) => {
+            if let KeyCode::Char(c) = event.code {
+                if c == 'c' && event.modifiers.contains(KeyModifiers::CONTROL) {
+                    terminal::disable_raw_mode()?;
+                    stdout.queue(Clear(ClearType::All))?;
+                    exit(0);
+                }
+
+                match c {
+                    'w' | 'k' | 'a' | 'h' | 's' | 'j' | 'd' | 'l' => client
+                        .send_move(buf, c)
+                        .map_err(|_| io::Error::new(io::ErrorKind::Other, "send move"))?,
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn handle_tcp_read(
+    s: &mut TcpStream,
+    stdout: &mut io::Stdout,
+    client: &mut Client,
+    terminal_dimensions: (u16, u16),
+    buf: &mut [u8],
+) -> io::Result<()> {
+    match s.read(buf) {
+        Ok(0) => {
+            client.stream = None;
+            terminal::disable_raw_mode()?;
+            stdout.queue(Clear(ClearType::All))?;
+            log_info!("Server closed the connection");
+            exit(0);
+        }
+        Ok(n) => {
+            if let Ok((packet, _)) = Packet::deserialize(&buf[..n]) {
+                handle_packet(packet, stdout, client, terminal_dimensions)?;
+            } else {
+                log_error!("Failed to deserialize server message");
+            }
+        }
+        Err(err) => {
+            if err.kind() != ErrorKind::WouldBlock {
+                client.stream = None;
+                log_error!("Connection error: {}", err);
+                exit(0);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_packet(
+    packet: Packet,
+    stdout: &mut io::Stdout,
+    client: &mut Client,
+    terminal_dimensions: (u16, u16),
+) -> io::Result<()> {
+    match packet {
+        Packet::Server(s) => match s {
+            ServerPacket::NewClientCoordsVisibleMap(nc) => {
+                client.id = nc.id;
+                client.coords = nc.coords;
+                client.visible_map = nc.map.into_iter().map(|mc| mc.into()).collect();
+                client.other_players = nc
+                    .players
+                    .into_iter()
+                    .map(|p| (p.id, Player { coords: p.coords }))
+                    .collect();
+            }
+            ServerPacket::NewCoords(nc) => {
+                client.coords = nc.center;
+                client.remove_non_visible();
+                client
+                    .visible_map
+                    .append(&mut nc.coords.into_iter().map(|mc| mc.into()).collect());
+                client.update_other_player_coords_after_move(&nc.players);
+            }
+            ServerPacket::OtherPlayerMoved(OtherPlayerMoved { id, coords }) => {
+                client.update_other_player_coords_after_other_player_move(id, coords);
+            }
+            ServerPacket::OtherPlayerMovedOutsideRadius(id)
+            | ServerPacket::PlayerDisconnected(id) => {
+                client.remove_player(id);
+            }
+        },
+        _ => panic!("Server cannot send client packets"),
+    }
+
+    rerender(stdout, client, terminal_dimensions)?;
+
+    Ok(())
 }
