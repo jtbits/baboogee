@@ -135,12 +135,32 @@ impl Server {
         )
         .map_err(|_| log_error!("Could not generate payload"))?;
 
-        self.id_counter += 1;
         client
             .conn
             .deref()
             .write(&buf[..n])
             .map_err(|err| log_error!("Could not write to client: {addr}, {err}"))?;
+
+        let players_seeing_client = self.clients.iter().filter(|(_, c)| {
+            utils::is_inside_circle(c.borrow().coords, c.borrow().radius, client.coords)
+        });
+
+        for (&other_addr, other_client) in players_seeing_client {
+            log_info!(
+                "Sending move notification to player with id: {}",
+                other_client.borrow().id
+            );
+            let n = protocol::generate_move_notify_payload(buf, client.coords, client.id)
+                .map_err(|_| ())?;
+            other_client
+                .borrow()
+                .conn
+                .deref()
+                .write(&buf[..n])
+                .map_err(|err| {
+                    log_error!("Could not notify client {other_addr} about the move: {err}")
+                })?;
+        }
         self.clients.insert(addr, RefCell::new(client));
 
         Ok(())
