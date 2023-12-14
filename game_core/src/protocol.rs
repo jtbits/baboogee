@@ -56,18 +56,19 @@ pub fn generate_move_notify_payload(
 
 #[derive(Serialize, Deserialize)]
 pub enum ClientPacket {
-    Move(Step),
+    Move(Direction),
+    Shoot(Direction),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub enum Step {
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub enum Direction {
     Up,
     Right,
     Down,
     Left,
 }
 
-impl TryFrom<char> for Step {
+impl TryFrom<char> for Direction {
     type Error = ();
     fn try_from(value: char) -> Result<Self, Self::Error> {
         match value {
@@ -96,63 +97,28 @@ impl Player {
 pub struct NewClient {
     pub id: u32,
     pub coords: Coords,
+    pub hp: u8,
+    pub weapon_range: u8,
     pub map: Vec<MapCell>,
     pub players: Vec<Player>,
 }
 
-pub fn generate_initial_payload(
-    buf: &mut [u8],
-    id: u32,
-    coords: Coords,
-    radius: u8,
-    map: &Map,
-    players: Vec<Player>,
-) -> Result<usize, SerializeError> {
-    let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(
-        id, coords, map, radius, players,
-    )));
-
-    packet.serialize(buf)
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NewCoords {
-    pub center: Coords,
-    pub coords: Vec<MapCell>,
-    pub players: Vec<Player>,
-}
-
-impl NewCoords {
-    fn new(center: (i16, i16), coords: Vec<MapCell>, players: Vec<Player>) -> Self {
-        Self {
-            center,
-            coords,
-            players,
-        }
-    }
-}
-
-pub fn generate_new_coords_payload(
-    buf: &mut [u8],
-    new_player_coord: Coords,
-    new_visiple_coord: Vec<MapCell>,
-    visible_players: Vec<Player>,
-) -> Result<usize, SerializeError> {
-    let packet = Packet::Server(ServerPacket::NewCoords(NewCoords::new(
-        new_player_coord,
-        new_visiple_coord,
-        visible_players,
-    )));
-
-    packet.serialize(buf)
-}
-
 impl NewClient {
-    fn new(id: u32, coords: Coords, map: &Map, radius: u8, players: Vec<Player>) -> Self {
+    fn new(
+        id: u32,
+        coords: Coords,
+        map: &Map,
+        radius: u8,
+        hp: u8,
+        weapon_range: u8,
+        players: Vec<Player>,
+    ) -> Self {
         Self {
             id,
             coords,
             players,
+            hp,
+            weapon_range,
             map: visible_map(map, coords, radius),
         }
     }
@@ -190,4 +156,58 @@ fn visible_map(map: &Map, coords: Coords, radius: u8) -> Vec<MapCell> {
     }
 
     res
+}
+pub fn generate_initial_payload(
+    buf: &mut [u8],
+    id: u32,
+    coords: Coords,
+    radius: u8,
+    hp: u8,
+    weapon_range: u8,
+    map: &Map,
+    players: Vec<Player>,
+) -> Result<usize, SerializeError> {
+    let packet = Packet::Server(ServerPacket::NewClientCoordsVisibleMap(NewClient::new(
+        id,
+        coords,
+        map,
+        radius,
+        hp,
+        weapon_range,
+        players,
+    )));
+
+    packet.serialize(buf)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NewCoords {
+    pub center: Coords,
+    pub coords: Vec<MapCell>,
+    pub players: Vec<Player>,
+}
+
+impl NewCoords {
+    fn new(center: (i16, i16), coords: Vec<MapCell>, players: Vec<Player>) -> Self {
+        Self {
+            center,
+            coords,
+            players,
+        }
+    }
+}
+
+pub fn generate_new_coords_payload(
+    buf: &mut [u8],
+    new_player_coord: Coords,
+    new_visiple_coord: Vec<MapCell>,
+    visible_players: Vec<Player>,
+) -> Result<usize, SerializeError> {
+    let packet = Packet::Server(ServerPacket::NewCoords(NewCoords::new(
+        new_player_coord,
+        new_visiple_coord,
+        visible_players,
+    )));
+
+    packet.serialize(buf)
 }

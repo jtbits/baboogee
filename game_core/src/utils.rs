@@ -3,7 +3,7 @@ use std::cmp::{max, min};
 use rand::{thread_rng, Rng};
 
 use crate::{
-    protocol::Step,
+    protocol::Direction,
     types::{Block, Coords, Map, MapCell, MoveCoords},
 };
 
@@ -29,18 +29,18 @@ pub fn generate_map() -> Map {
 pub fn try_move_in_map(
     map: &Map,
     (center_x, center_y): Coords,
-    step: Step,
+    step: Direction,
     radius: u8,
     player_coords: &Vec<Coords>,
 ) -> Result<MoveCoords, ()> {
     let center_x = match step {
-        Step::Up => center_x - 1,
-        Step::Down => center_x + 1,
+        Direction::Up => center_x - 1,
+        Direction::Down => center_x + 1,
         _ => center_x,
     };
     let center_y = match step {
-        Step::Left => center_y - 1,
-        Step::Right => center_y + 1,
+        Direction::Left => center_y - 1,
+        Direction::Right => center_y + 1,
         _ => center_y,
     };
 
@@ -49,7 +49,10 @@ pub fn try_move_in_map(
         return Err(());
     }
 
-    if player_coords.iter().any(|&(x, y)| x == center_x && y == center_y) {
+    if player_coords
+        .iter()
+        .any(|&(x, y)| x == center_x && y == center_y)
+    {
         return Err(());
     }
 
@@ -65,10 +68,10 @@ pub fn try_move_in_map(
     assert!(top_left.1 <= bottom_right.1);
 
     let predicate: fn(i16, i16, i16) -> bool = match step {
-        Step::Up => |x, y, r| x == ((r.pow(2) - y.pow(2)) as f64).sqrt() as i16,
-        Step::Down => |x, y, r| x == -((r.pow(2) - y.pow(2)) as f64).sqrt() as i16,
-        Step::Left => |x, y, r| y == ((r.pow(2) - x.pow(2)) as f64).sqrt() as i16,
-        Step::Right => |x, y, r| y == -((r.pow(2) - x.pow(2)) as f64).sqrt() as i16,
+        Direction::Up => |x, y, r| x == ((r.pow(2) - y.pow(2)) as f64).sqrt() as i16,
+        Direction::Down => |x, y, r| x == -((r.pow(2) - y.pow(2)) as f64).sqrt() as i16,
+        Direction::Left => |x, y, r| y == ((r.pow(2) - x.pow(2)) as f64).sqrt() as i16,
+        Direction::Right => |x, y, r| y == -((r.pow(2) - x.pow(2)) as f64).sqrt() as i16,
     };
 
     let mut new_coords = vec![];

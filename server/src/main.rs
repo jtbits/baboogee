@@ -39,11 +39,30 @@ enum ClientEvent {
     },
 }
 
-pub struct Client {
-    id: u32,
+struct Client {
     conn: Arc<TcpStream>,
+
+    id: u32,
     coords: Coords,
     radius: u8,
+    weapon: Weapon,
+    hp: u8,
+}
+
+struct Weapon {
+    range: u8,
+    pierce: u8,
+    damage: u8,
+}
+
+impl Default for Weapon {
+    fn default() -> Self {
+        Self {
+            range: 5,
+            pierce: 1,
+            damage: 1,
+        }
+    }
 }
 
 impl Client {
@@ -52,7 +71,9 @@ impl Client {
         let new = Self {
             conn,
             coords,
+            weapon: Default::default(),
             radius: 5,
+            hp: 10,
             id: *id,
         };
         *id += 1;
@@ -107,6 +128,8 @@ impl Server {
             client.id,
             client.coords,
             client.radius,
+            client.hp,
+            client.weapon.range,
             &self.map,
             players_inside_radius,
         )
@@ -153,6 +176,9 @@ impl Server {
         match packet {
             Packet::Client(cp) => {
                 match cp {
+                    ClientPacket::Shoot(angle) => {
+                        // client
+                    }
                     ClientPacket::Move(step) => {
                         log_info!("Got Move client packet with step: {:?}", step);
                         let move_optional = utils::try_move_in_map(
@@ -160,11 +186,13 @@ impl Server {
                             client.borrow().coords,
                             step,
                             client.borrow().radius,
-                            &self.clients.iter()
-                            .filter(|(&a, _)| a != addr)
-                            .map(|(_, c)| c.borrow().coords)
-                            .collect(),
-                            );
+                            &self
+                                .clients
+                                .iter()
+                                .filter(|(&a, _)| a != addr)
+                                .map(|(_, c)| c.borrow().coords)
+                                .collect(),
+                        );
                         if let Err(_) = move_optional {
                             return Ok(());
                         }
@@ -180,9 +208,9 @@ impl Server {
                                     new_player_coord,
                                     client.borrow().radius,
                                     c.borrow().coords,
-                                    )
+                                )
                             })
-                        .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
+                            .map(|(_, c)| Player::new(c.borrow().id, c.borrow().coords))
                             .collect();
 
                         // send new coords to player
@@ -191,8 +219,8 @@ impl Server {
                             new_player_coord,
                             new_visiple_coord,
                             players_inside_radius,
-                            )
-                            .map_err(|_| ())?;
+                        )
+                        .map_err(|_| ())?;
                         client
                             .borrow()
                             .conn
@@ -212,19 +240,19 @@ impl Server {
                                     c.borrow().coords,
                                     c.borrow().radius,
                                     new_player_coord,
-                                    )
+                                )
                             });
                         for (&other_addr, other_client) in players_seeing_client {
                             log_info!(
                                 "Sending move notification to player with id: {}",
                                 client.borrow().id
-                                );
+                            );
                             let n = protocol::generate_move_notify_payload(
                                 buf,
                                 new_player_coord,
                                 client.borrow().id,
-                                )
-                                .map_err(|_| ())?;
+                            )
+                            .map_err(|_| ())?;
                             other_client
                                 .borrow()
                                 .conn
@@ -247,26 +275,26 @@ impl Server {
                                     c.borrow().coords,
                                     c.borrow().radius,
                                     prev_player_coords,
-                                    )
-                            })
-                        .filter(|(_, c)| {
-                            !utils::is_inside_circle(
-                                c.borrow().coords,
-                                c.borrow().radius,
-                                new_player_coord,
                                 )
-                        });
+                            })
+                            .filter(|(_, c)| {
+                                !utils::is_inside_circle(
+                                    c.borrow().coords,
+                                    c.borrow().radius,
+                                    new_player_coord,
+                                )
+                            });
 
                         for (&other_addr, other_client) in players_lost_client {
                             log_info!(
                                 "Sending move outside radius notification to player with id: {}",
                                 client.borrow().id
-                                );
+                            );
                             let n = protocol::generate_move_outside_radius_notify_payload(
                                 buf,
                                 client.borrow().id,
-                                )
-                                .map_err(|_| ())?;
+                            )
+                            .map_err(|_| ())?;
                             other_client
                                 .borrow()
                                 .conn
