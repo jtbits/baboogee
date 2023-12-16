@@ -1,4 +1,5 @@
 use std::{
+    cmp::{max, min},
     collections::HashMap,
     io::{self, stdout, ErrorKind, Read, Write},
     net::TcpStream,
@@ -27,7 +28,8 @@ use game_core::{
 use logger::{log, log_error, log_info};
 use proto_dryb::{Deserialize, Serialize};
 
-#[warn(unused_macros)]
+#[allow(unused_macros)]
+
 macro_rules! print_to_file {
     ($($arg:tt)*) => {{
         use std::fs::OpenOptions;
@@ -44,7 +46,7 @@ macro_rules! print_to_file {
     }};
 }
 
-const _LOGO: &'static str = r#"
+const LOGO: &'static str = r#"
 ██████   █████  ██████   ██████   ██████   ██████  ███████ ███████ 
 ██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██       ██      ██      
 ██████  ███████ ██████  ██    ██ ██    ██ ██   ███ █████   █████   
@@ -87,6 +89,7 @@ struct Client {
     current_hp: u8,
     weapon: Weapon,
     shooting_angle: Direction,
+    quit: bool,
 }
 
 #[derive(Default)]
@@ -103,12 +106,13 @@ impl Default for Client {
             id: 0,
             max_hp: 0,
             current_hp: 0,
-            weapon: Default::default(),
-            stream: Default::default(),
+            quit: false,
+            stream: None,
+            visible_map: vec![],
+            other_players: HashMap::default(),
+            players_outside: HashMap::default(),
+            weapon: Weapon::default(),
             coords: Default::default(),
-            other_players: Default::default(),
-            players_outside: Default::default(),
-            visible_map: Default::default(),
         }
     }
 }
@@ -153,8 +157,9 @@ impl Client {
     }
 
     fn remove_non_visible(&mut self) {
-        self.visible_map.retain(|MapCell { coords: (x, y), .. }| {
-            (x - self.coords.0).pow(2) + (y - self.coords.1).pow(2) <= (self.radius as i16).pow(2)
+        self.visible_map.retain(|&MapCell { coords: (x, y), .. }| {
+            (x as i16 - self.coords.0 as i16).pow(2) + (y as i16 - self.coords.1 as i16).pow(2)
+                <= (self.radius as i16).pow(2)
         });
     }
 
@@ -200,12 +205,12 @@ impl Client {
     }
 }
 
-fn get_padding(a: Coords, b: (u16, u16)) -> Coords {
-    ((b.0 as i16 - a.0), (b.1 as i16 - a.1))
+fn get_padding(a: Coords, b: Coords) -> (i16, i16) {
+    ((b.0 as i16 - a.0 as i16), (b.1 as i16 - a.1 as i16))
 }
 
-fn to_absolute((x, y): Coords, (padding_x, padding_y): Coords) -> Coords {
-    (x + padding_x, y + padding_y)
+fn to_absolute((x, y): Coords, (padding_x, padding_y): (i16, i16)) -> Coords {
+    ((x as i16 + padding_x) as u16, (y as i16 + padding_y) as u16)
 }
 
 fn draw_map(
@@ -256,24 +261,16 @@ fn draw_map(
     Ok(())
 }
 
-fn draw_line(stdout: &Arc<Mutex<io::Stdout>>, x: u16, w: usize) -> io::Result<()> {
+fn draw_metadata(stdout: &Arc<Mutex<io::Stdout>>, client: &Arc<RwLock<Client>>) -> io::Result<()> {
     let mut stdout = stdout.lock().unwrap();
-    stdout.queue(MoveTo(0, x))?;
-    stdout.queue(PrintStyledContent("=".repeat(w).green()))?;
-
-    Ok(())
-}
-
-fn draw_metadata(
-    stdout: &Arc<Mutex<io::Stdout>>,
-    terminal_height: u16,
-    client: &Arc<RwLock<Client>>,
-) -> io::Result<()> {
-    let mut stdout = stdout.lock().unwrap();
-    stdout.queue(MoveTo(0, terminal_height))?;
     let client = client.read().unwrap();
     let (x, y) = client.coords;
-    stdout.queue(PrintStyledContent(format!("({:3}:{:3})", x, y).green()))?;
+    stdout.queue(MoveTo(0, 0))?;
+    stdout.queue(PrintStyledContent(format!("XY ({:2}:{:2})", x, y).green()))?;
+    stdout.queue(MoveTo(0, 1))?;
+    stdout.queue(PrintStyledContent(
+        format!("HP ({:2}/{:2})", client.current_hp, client.max_hp).red(),
+    ))?;
 
     Ok(())
 }
@@ -288,12 +285,7 @@ fn rerender(
         stdout.queue(Clear(ClearType::All))?;
     }
     draw_map(stdout, terminal_dimensions, client)?;
-    draw_metadata(stdout, terminal_dimensions.0, client)?;
-    draw_line(
-        stdout,
-        terminal_dimensions.1 - 2,
-        terminal_dimensions.0 as usize,
-    )?;
+    draw_metadata(stdout, client)?;
 
     Ok(())
 }
@@ -311,6 +303,8 @@ fn main() -> io::Result<()> {
     let stdout = Arc::new(Mutex::new(stdout()));
     configure_stdout(&stdout)?;
 
+    print_logo_scene(&stdout, terminal_dimensions)?;
+
     let mut buf = [0; 512];
     let client = Arc::new(RwLock::new(Client::default()));
     {
@@ -322,6 +316,7 @@ fn main() -> io::Result<()> {
     let client_animation_recv = client.clone();
     thread::spawn(move || {
         let stdout = Arc::clone(&stdout_animation_recv);
+        let client = Arc::clone(&client_animation_recv);
 
         loop {
             match animation_receiver.recv() {
@@ -343,7 +338,6 @@ fn main() -> io::Result<()> {
                                 stdout.queue(PrintStyledContent(symbol)).unwrap();
                             }
                             CommandEnum::ReRender => {
-                                let client = Arc::clone(&client_animation_recv);
                                 rerender(&stdout, &client, terminal::size().unwrap()).unwrap();
                             }
                         }
@@ -352,6 +346,12 @@ fn main() -> io::Result<()> {
                     stdout.flush().unwrap();
                 }
                 Err(_err) => {}
+            }
+
+            if let Ok(client) = client.read() {
+                if client.quit {
+                    break;
+                }
             }
         }
     });
@@ -381,7 +381,60 @@ fn main() -> io::Result<()> {
         stdout.flush()?;
 
         thread::sleep(Duration::from_millis(33));
+
+        if let Ok(client) = client.read() {
+            if client.quit == true {
+                break;
+            }
+        }
     }
+
+    draw_death_scene(&stdout)?;
+
+    Ok(())
+}
+
+fn print_logo_scene(
+    stdout: &Arc<Mutex<io::Stdout>>,
+    (terminal_width, terminal_height): Coords,
+) -> io::Result<()> {
+    let mut stdout = stdout.lock().unwrap();
+
+    let logo_as_2d_vec = LOGO
+        .lines()
+        .map(|line| line.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let height = logo_as_2d_vec.len() as i16;
+    let max_width = logo_as_2d_vec.iter().map(|row| row.len()).max().unwrap() as i16;
+    let mid_terminal_height = terminal_height / 2;
+
+    for w in (-max_width..terminal_width as i16).rev() {
+        for (h, i) in (-height / 2..height / 2).zip(0..height) {
+            let h = (mid_terminal_height as i16 + h) as u16;
+            stdout.queue(MoveTo(max(w, 0) as u16, h))?;
+            let row = &logo_as_2d_vec[i as usize];
+            let row_width = row.len();
+            let row_slice = &row[max(0, min(row_width as i16, -w)) as usize
+                ..min((terminal_width - max(w, 0) as u16) as usize, row.len())];
+            stdout.queue(PrintStyledContent(
+                row_slice.into_iter().collect::<String>().red(),
+            ))?;
+        }
+        stdout.flush()?;
+        thread::sleep(Duration::from_millis(33));
+    }
+
+    thread::sleep(Duration::from_millis(333));
+
+    Ok(())
+}
+
+fn draw_death_scene(stdout: &Arc<Mutex<io::Stdout>>) -> io::Result<()> {
+    let mut stdout = stdout.lock().unwrap();
+
+    stdout.queue(Clear(ClearType::All))?;
+
+    Ok(())
 }
 
 fn configure_stdout(stdout: &Arc<Mutex<io::Stdout>>) -> io::Result<()> {
@@ -420,6 +473,14 @@ fn handle_io_read(
                         client
                             .send_move(buf, c)
                             .map_err(|_| io::Error::new(io::ErrorKind::Other, "send move"))?;
+
+                        client.shooting_angle = match c {
+                            'w' | 'k' => Direction::Up,
+                            's' | 'j' => Direction::Down,
+                            'a' | 'h' => Direction::Left,
+                            'd' | 'l' => Direction::Right,
+                            _ => unreachable!(),
+                        }
                     }
                     ' ' => {
                         let mut client = client.write().unwrap();
@@ -551,8 +612,10 @@ fn handle_packet(
                     client.coords = nc.coords;
                     client.max_hp = nc.hp;
                     client.current_hp = nc.hp;
+                    client.radius = nc.radius;
                     client.weapon.range = nc.weapon_range;
-                    client.visible_map = nc.map.into_iter().map(|mc| mc.into()).collect();
+                    client.visible_map =
+                        nc.visible_coords.into_iter().map(|mc| mc.into()).collect();
                     client.other_players = nc
                         .players
                         .into_iter()
@@ -560,18 +623,6 @@ fn handle_packet(
                         .collect();
                 }
                 ServerPacket::NewCoords(nc) => {
-                    client.shooting_angle = if client.coords.0 > nc.center.0 {
-                        Direction::Up
-                    } else if client.coords.0 < nc.center.0 {
-                        Direction::Down
-                    } else if client.coords.1 > nc.center.1 {
-                        Direction::Left
-                    } else if client.coords.1 < nc.center.1 {
-                        Direction::Right
-                    } else {
-                        panic!("Invalid new coords");
-                    };
-
                     client.coords = nc.center;
                     client.remove_non_visible();
                     client
@@ -585,6 +636,13 @@ fn handle_packet(
                 ServerPacket::OtherPlayerMovedOutsideRadius(id)
                 | ServerPacket::PlayerDisconnected(id) => {
                     client.remove_player(id);
+                }
+                ServerPacket::PlayerWasShot(damage, _direction) => {
+                    client.current_hp = client.current_hp.checked_sub(damage).unwrap_or(0);
+                }
+                ServerPacket::PlayerDied(_id) => {
+                    client.quit = true;
+                    client.stream = None;
                 }
             },
             _ => panic!("Server cannot send client packets"),

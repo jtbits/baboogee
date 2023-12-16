@@ -1,7 +1,7 @@
 use proto_dryb::*;
 use proto_dryb_derive::{Deserialize, Serialize};
 
-pub type Coords = (i16, i16);
+pub type Coords = (u16, u16);
 
 #[derive(Serialize, Deserialize)]
 pub struct MapCell {
@@ -13,6 +13,12 @@ impl MapCell {
     pub fn new(block: Block, coords: Coords) -> Self {
         Self { block, coords }
     }
+}
+
+pub struct Map {
+    pub height: usize,
+    pub width: usize,
+    pub coords: Vec<Vec<Block>>,
 }
 
 pub type MoveCoords = (Coords, Vec<MapCell>);
@@ -30,11 +36,4 @@ pub enum Block {
     WallTopRight,
     WallBottomLeft,
     WallBottomRight,
-}
-
-#[derive(Default)]
-pub struct Map {
-    pub height: u16,
-    pub width: u16,
-    pub coords: Vec<Vec<Block>>,
 }
