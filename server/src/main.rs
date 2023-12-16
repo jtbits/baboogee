@@ -419,13 +419,26 @@ impl Server {
     fn client_disconnected(&mut self, addr: SocketAddr, buf: &mut [u8]) -> Result<(), ()> {
         log_info!("Client {addr} disconnected");
 
-        let removed = self
-            .clients
-            .remove(&addr)
-            .ok_or(())
-            .map_err(|_| log_error!("Did not found client in hashmap on disconnect"))?;
+        let (id, coords) = {
+            let removed = self
+                .clients
+                .remove(&addr)
+                .ok_or(())
+                .map_err(|_| log_error!("Did not found client in hashmap on disconnect"))?;
+            let removed = removed.read().unwrap();
 
-        let n = protocol::generate_player_disconnected(buf, removed.read().unwrap().id)
+            (removed.id, removed.coords)
+        };
+
+        self.map
+            .write()
+            .unwrap()
+            .coords
+            .get_mut(coords.0 as usize)
+            .and_then(|row| row.get_mut(coords.1 as usize))
+            .map(|mc| mc.client = None);
+
+        let n = protocol::generate_player_disconnected(buf, id)
             .map_err(|_| log_error!("Could not generate player_disconnected"))?;
 
         for c in self.clients.values() {

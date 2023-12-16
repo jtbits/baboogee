@@ -2,7 +2,7 @@ use std::{
     cmp::{max, min},
     collections::HashMap,
     io::{self, stdout, ErrorKind, Read, Write},
-    net::TcpStream,
+    net::{TcpStream, Shutdown},
     process::exit,
     sync::{
         mpsc::{channel, Sender},
@@ -46,12 +46,93 @@ macro_rules! print_to_file {
     }};
 }
 
+// https://www.patorjk.com/software/taag/#p=display&f=ANSI%20Regular&t=BABOOGEE
 const LOGO: &'static str = r#"
 ██████   █████  ██████   ██████   ██████   ██████  ███████ ███████ 
 ██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██       ██      ██      
 ██████  ███████ ██████  ██    ██ ██    ██ ██   ███ █████   █████   
 ██   ██ ██   ██ ██   ██ ██    ██ ██    ██ ██    ██ ██      ██      
 ██████  ██   ██ ██████   ██████   ██████   ██████  ███████ ███████ 
+"#;
+
+const KILLED_YOU: &'static str = r#"
+██   ██ ██ ██      ██      ███████ ██████      ██    ██  ██████  ██    ██ 
+██  ██  ██ ██      ██      ██      ██   ██      ██  ██  ██    ██ ██    ██ 
+█████   ██ ██      ██      █████   ██   ██       ████   ██    ██ ██    ██ 
+██  ██  ██ ██      ██      ██      ██   ██        ██    ██    ██ ██    ██ 
+██   ██ ██ ███████ ███████ ███████ ██████         ██     ██████   ██████  
+"#;
+
+const ONE: &'static str = r#"
+ ██
+███
+ ██
+ ██
+ ██
+"#;
+
+const TWO: &'static str = r#"
+██████  
+     ██ 
+ █████  
+██      
+███████
+"#;
+
+const THREE: &'static str = r#"
+██████ 
+     ██
+ █████ 
+     ██
+██████ 
+"#;
+
+const FOUR: &'static str = r#"
+██   ██
+██   ██
+███████
+     ██
+     ██
+"#;
+
+const FIVE: &'static str = r#"
+███████
+██     
+███████
+     ██
+███████
+"#;
+
+const SIX: &'static str = r#"
+ ██████ 
+██      
+███████ 
+██    ██
+ ██████ 
+"#;
+
+const SEVEN: &'static str = r#"
+███████
+     ██
+    ██ 
+   ██  
+   ██
+"#;
+
+const EIGHT: &'static str = r#"
+ █████ 
+██   ██
+ █████ 
+██   ██
+ █████ 
+"#;
+
+const NINE: &'static str = r#"
+ █████ 
+██   ██
+ ██████
+     ██
+ █████ 
 "#;
 
 // TODO hack bcs cannot impl types from other crates
@@ -367,6 +448,8 @@ fn main() -> io::Result<()> {
             )?;
         }
 
+        // FIXME i hate this approach dont need to take and return the stream + wont need to drop
+        // stream at the end of the loop
         let stream = {
             let mut client = client.write().unwrap();
             client.stream.take()
@@ -382,14 +465,17 @@ fn main() -> io::Result<()> {
 
         thread::sleep(Duration::from_millis(33));
 
-        if let Ok(client) = client.read() {
+        if let Ok(mut client) = client.write() {
             if client.quit == true {
+                if let Some(s) = client.stream.take() {
+                    drop(s);
+                }
                 break;
             }
         }
     }
 
-    draw_death_scene(&stdout)?;
+    draw_death_scene(&stdout, terminal_dimensions)?;
 
     Ok(())
 }
@@ -421,18 +507,45 @@ fn print_logo_scene(
             ))?;
         }
         stdout.flush()?;
-        thread::sleep(Duration::from_millis(33));
+        thread::sleep(Duration::from_millis(10));
     }
-
-    thread::sleep(Duration::from_millis(333));
 
     Ok(())
 }
 
-fn draw_death_scene(stdout: &Arc<Mutex<io::Stdout>>) -> io::Result<()> {
+fn draw_death_scene(
+    stdout: &Arc<Mutex<io::Stdout>>,
+    (terminal_width, terminal_height): Coords,
+) -> io::Result<()> {
     let mut stdout = stdout.lock().unwrap();
 
     stdout.queue(Clear(ClearType::All))?;
+
+    let logo_as_2d_vec = KILLED_YOU
+        .lines()
+        .map(|line| line.chars().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let height = logo_as_2d_vec.len() as i16;
+    let max_width = logo_as_2d_vec.iter().map(|row| row.len()).max().unwrap() as i16;
+    let mid_terminal_height = terminal_height / 2;
+
+    for w in (-max_width..terminal_width as i16).rev() {
+        for (h, i) in (-height / 2..height / 2).zip(0..height) {
+            let h = (mid_terminal_height as i16 + h) as u16;
+            stdout.queue(MoveTo(max(w, 0) as u16, h))?;
+            let row = &logo_as_2d_vec[i as usize];
+            let row_width = row.len();
+            let row_slice = &row[max(0, min(row_width as i16, -w)) as usize
+                ..min((terminal_width - max(w, 0) as u16) as usize, row.len())];
+            stdout.queue(PrintStyledContent(
+                row_slice.into_iter().collect::<String>().red(),
+            ))?;
+        }
+        stdout.flush()?;
+        thread::sleep(Duration::from_millis(33));
+    }
+
+    thread::sleep(Duration::from_millis(333));
 
     Ok(())
 }
@@ -642,7 +755,6 @@ fn handle_packet(
                 }
                 ServerPacket::PlayerDied(_id) => {
                     client.quit = true;
-                    client.stream = None;
                 }
             },
             _ => panic!("Server cannot send client packets"),
