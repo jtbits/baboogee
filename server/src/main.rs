@@ -445,8 +445,7 @@ impl Server {
             let _ = c
                 .write()
                 .unwrap()
-                .write(&mut buf[..n])
-                .inspect_err(|err| log_error!("Error writing to client: {err}"));
+                .write(&mut buf[..n]);
         }
 
         Ok(())
